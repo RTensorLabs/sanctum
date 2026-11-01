@@ -5,6 +5,7 @@ import '../background/background.dart';
 import '../identity/secrets.dart';
 import '../net/net_bus.dart';
 import '../update/updater.dart';
+import '../update/release_notes.dart';
 import '../version.dart';
 import 'feedback_screen.dart';
 import '../theme/tokens.dart';
@@ -197,19 +198,20 @@ class _NearbySettingsState extends State<NearbySettings> {
   }
 }
 
-/// "Build 27 is available": one tap downloads it through Tor and opens
-/// Android's installer.
+/// Checks, release notes, download progress and installation in one place.
 
 class UpdateSettings extends StatefulWidget {
-  const UpdateSettings({super.key});
+  const UpdateSettings({super.key, this.updater});
+
+  final Updater? updater;
 
   @override
   State<UpdateSettings> createState() => _UpdateSettingsState();
 }
 
 class _UpdateSettingsState extends State<UpdateSettings> {
-  bool _checking = false;
   bool _auto = true;
+  Updater get _updater => widget.updater ?? Updater.instance;
 
   /// Taps on the version: 7 unlock the developer's feedback inbox.
   int _taps = 0;
@@ -230,30 +232,19 @@ class _UpdateSettingsState extends State<UpdateSettings> {
       if (mounted) setState(() => _auto = v);
     });
     Background.buildNumber().then((b) {
-      if (mounted) setState(() => Updater.instance.current = b);
+      if (mounted) setState(() => _updater.current = b);
     });
+    _updater.check(onResume: true);
   }
 
   Future<void> _check() async {
     HapticFeedback.selectionClick();
-    setState(() => _checking = true);
-    await Updater.instance.check(force: true);
-    if (!mounted) return;
-    setState(() => _checking = false);
-    final u = Updater.instance;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(u.error.value ??
-            (u.available.value == null
-                ? 'Sanctum is up to date.'
-                : 'A new version is ready: tap Update on the home screen.')),
-      ));
+    await _updater.check(force: true);
   }
 
   @override
   Widget build(BuildContext context) {
-    final current = Updater.instance.current;
+    final u = _updater;
     return Material(
       color: Palette.surface,
       borderRadius: BorderRadius.circular(Radii.md),
@@ -263,19 +254,80 @@ class _UpdateSettingsState extends State<UpdateSettings> {
           ListTile(
             leading: const Icon(Icons.system_update_rounded),
             onTap: _tapVersion,
-            title: Text('Sanctum ${fullVersion(current)}'),
-            subtitle:
-                const Text('Updates are downloaded privately, and only genuine Sanctum updates can be installed.'),
-            trailing: _checking
-                ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : TextButton(onPressed: _check, child: const Text('Check')),
+            title: Text('Sanctum ${fullVersion(u.current)}'),
+            subtitle: const Text('Updates are downloaded privately. Android asks you before installing.'),
           ),
           SwitchListTile(
             value: _auto,
             title: const Text('Check automatically'),
-            onChanged: (v) {
+            subtitle: const Text('Checks every few minutes while connected, and when you return to Sanctum.'),
+            onChanged: (v) async {
               setState(() => _auto = v);
-              saveFlag('auto_update_check', v);
+              await saveFlag('auto_update_check', v);
+              if (v) await u.check(force: true);
+            },
+          ),
+          ListenableBuilder(
+            listenable: Listenable.merge([u.available, u.checking, u.installing, u.progress, u.error, u.lastChecked]),
+            builder: (context, _) {
+              final update = u.available.value;
+              final progress = u.progress.value;
+              final checking = u.checking.value;
+              final installing = u.installing.value;
+              final busy = checking || installing;
+              final checked = u.lastChecked.value;
+              final status = checking
+                  ? 'Checking for updates…'
+                  : installing
+                      ? progress == null
+                          ? 'Opening the installer…'
+                          : 'Downloading the update… ${(progress * 100).round()}%'
+                      : update != null
+                          ? 'Sanctum ${fullVersion(update.build.toInt())} is available'
+                          : u.error.value != null
+                              ? 'Couldn’t check for updates'
+                              : checked != null
+                                  ? 'Sanctum is up to date.'
+                                  : 'Check for the latest version.';
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  Text(status, style: AppText.bodyStrong),
+                  if (checked != null && !busy) ...[
+                    const SizedBox(height: Space.xs),
+                    Text('Last checked at ${TimeOfDay.fromDateTime(checked).format(context)}', style: AppText.caption),
+                  ],
+                  if (busy)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: Space.md),
+                      child: LinearProgressIndicator(value: progress == null || progress == 0 ? null : progress),
+                    ),
+                  if (u.error.value != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: Space.sm),
+                      child: Text(u.error.value!, style: AppText.caption.copyWith(color: Palette.danger)),
+                    ),
+                  const SizedBox(height: Space.md),
+                  Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+                    if (update != null)
+                      FilledButton.icon(
+                        onPressed: busy ? null : u.install,
+                        icon: const Icon(Icons.system_update_rounded),
+                        label: const Text('Update now'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: busy ? null : _check,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Check for updates'),
+                    ),
+                    if (update != null)
+                      TextButton(
+                        onPressed: busy ? null : () => showReleaseNotes(context, update, updater: u),
+                        child: const Text('What’s new'),
+                      ),
+                  ]),
+                ]),
+              );
             },
           ),
         ],

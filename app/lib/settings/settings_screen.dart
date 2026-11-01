@@ -181,7 +181,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.system_update_rounded,
                 color: const Color(0xFFFF8A4C),
                 title: 'Updates',
-                subtitle: 'New versions of Sanctum',
+                subtitle: 'Check, download and install',
                 page: () => const _Page('Updates', [UpdateSettings()]),
               ),
               _Entry(

@@ -103,7 +103,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.hidden && _showHidden) setState(() => _showHidden = false);
     if (state != AppLifecycleState.resumed) return;
     NetBus.instance.refresh();
-    Updater.instance.check();
+    Updater.instance.check(onResume: true);
     _loadChats();
     _loadTemp();
     _loadRequests();
@@ -134,6 +134,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Pull to refresh: reconnect to friends now, and reload everything.
   Future<void> _refresh() async {
     HapticFeedback.mediumImpact();
+    // Check updates without holding the chat refresh spinner through Tor retries.
+    if (NetBus.instance.status.value.status == NetStatus.online) unawaited(_checkUpdates());
     await Future.wait([
       NetBus.instance.refresh(),
       _loadChats(),
@@ -143,6 +145,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       Future<void>.delayed(const Duration(milliseconds: 700)),
     ]);
     await NetBus.instance.refreshOnline();
+  }
+
+  Future<void> _checkUpdates() async {
+    final u = Updater.instance;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('Checking for updates…')));
+    await u.check(force: true);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (u.available.value == null) {
+      messenger.showSnackBar(SnackBar(content: Text(u.error.value ?? 'Sanctum is up to date.')));
+    }
   }
 
   /// A notification was tapped: show that chat (or the requests).
@@ -818,21 +833,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       : const SizedBox(width: double.infinity),
                 ),
                 if (_page.round() == 0 && _search.text.isEmpty && _needsFriend)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.sm),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(Space.lg),
-                      decoration: BoxDecoration(
-                          color: Palette.surface,
-                          borderRadius: BorderRadius.circular(Radii.md),
-                          border: Border.all(color: Palette.outline)),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('Add your first friend', style: AppText.heading),
-                        const SizedBox(height: Space.xs),
-                        Text('Add someone you trust, then verify their code together.', style: AppText.caption),
-                      ]),
-                    ),
+                  ListenableBuilder(
+                    listenable: Updater.instance.available,
+                    builder: (context, _) => largeText && Updater.instance.available.value != null
+                        ? const SizedBox.shrink()
+                        : Padding(
+                            padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.sm),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(Space.lg),
+                              decoration: BoxDecoration(
+                                  color: Palette.surface,
+                                  borderRadius: BorderRadius.circular(Radii.md),
+                                  border: Border.all(color: Palette.outline)),
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                Text('Add your first friend', style: AppText.heading),
+                                const SizedBox(height: Space.xs),
+                                Text('Add someone you trust, then verify their code together.', style: AppText.caption),
+                              ]),
+                            ),
+                          ),
                   ),
                 if (_page.round() == 0 && _search.text.isEmpty) CatchUpCard(hidden: _showHidden, onOpen: _openAt),
                 const _UpdateBanner(),
@@ -1844,7 +1864,7 @@ class _ReliabilityBannerState extends State<_ReliabilityBanner> with WidgetsBind
   }
 }
 
-/// Nearby: friends on the same Wi-Fi or hotspot, with no internet.
+/// A found update, with installation and release notes available on Home.
 class _UpdateBanner extends StatelessWidget {
   const _UpdateBanner();
 
@@ -1852,10 +1872,11 @@ class _UpdateBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final u = Updater.instance;
     return ListenableBuilder(
-      listenable: Listenable.merge([u.available, u.progress, u.error]),
+      listenable: Listenable.merge([u.available, u.progress, u.error, u.checking, u.installing]),
       builder: (context, _) {
         final update = u.available.value;
         final progress = u.progress.value;
+        final busy = u.checking.value || u.installing.value;
         return AnimatedSize(
           duration: Motion.medium,
           curve: Motion.decelerate,
@@ -1879,27 +1900,32 @@ class _UpdateBanner extends StatelessWidget {
                           Expanded(
                             child: Text(
                               progress == null
-                                  ? 'A new version of Sanctum is ready'
+                                  ? u.checking.value
+                                      ? 'Checking for updates…'
+                                      : u.installing.value
+                                          ? 'Opening the installer…'
+                                          : 'A new version of Sanctum is ready'
                                   : 'Downloading the update… ${(progress * 100).round()}%',
                               style: AppText.bodyStrong,
                             ),
                           ),
-                          if (progress == null) ...[
-                            TextButton(
-                              onPressed: () => showReleaseNotes(context, update),
-                              child: const Text('What\'s new'),
-                            ),
-                            TextButton(
-                              onPressed: () {
-                                HapticFeedback.selectionClick();
-                                u.install();
-                              },
-                              child: const Text('Update'),
-                            ),
-                          ],
                         ],
                       ),
-                      if (progress != null)
+                      if (!busy)
+                        Wrap(spacing: Space.sm, children: [
+                          FilledButton(
+                            onPressed: () {
+                              HapticFeedback.selectionClick();
+                              u.install();
+                            },
+                            child: const Text('Update now'),
+                          ),
+                          TextButton(
+                            onPressed: () => showReleaseNotes(context, update),
+                            child: const Text('What\'s new'),
+                          ),
+                        ]),
+                      if (busy)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(0, Space.sm, Space.md, Space.xs),
                           child: LinearProgressIndicator(value: progress == 0 ? null : progress),

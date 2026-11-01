@@ -6,7 +6,8 @@ import '../version.dart';
 import 'updater.dart';
 
 /// What changed since the installed build, then Update.
-Future<void> showReleaseNotes(BuildContext context, UpdateInfo update) => showModalBottomSheet<void>(
+Future<void> showReleaseNotes(BuildContext context, UpdateInfo update, {Updater? updater}) =>
+    showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -43,7 +44,7 @@ Future<void> showReleaseNotes(BuildContext context, UpdateInfo update) => showMo
                 child: FilledButton.icon(
                   onPressed: () {
                     Navigator.pop(sheet);
-                    Updater.instance.install();
+                    (updater ?? Updater.instance).install();
                   },
                   icon: const Icon(Icons.system_update_rounded),
                   label: const Text('Update'),

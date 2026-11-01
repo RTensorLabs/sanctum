@@ -16,6 +16,8 @@ import 'package:sanctum/src/rust/api/sigil.dart';
 import 'package:sanctum/src/rust/api/store.dart';
 import 'package:sanctum/src/rust/frb_generated.dart';
 import 'package:sanctum/theme/sigil_theme.dart';
+import 'package:sanctum/update/updater.dart';
+import 'package:sanctum/src/rust/api/update.dart';
 import 'home_test.dart' show loadFonts, settle;
 
 class _Messages implements MessageSource {
@@ -111,6 +113,15 @@ void main() {
     expect(target.width, greaterThanOrEqualTo(48));
     expect(target.height, greaterThanOrEqualTo(48));
     expect(tester.takeException(), isNull);
+    Updater.instance.available.value = const UpdateInfo(
+        build: 81,
+        url: 'https://github.com/Tejascodex001/sanctum/releases/download/build-81/app-release.apk',
+        notes: []);
+    addTearDown(() => Updater.instance.available.value = null);
+    await settle(tester);
+    expect(find.text('Update now'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    Updater.instance.available.value = null;
     await tester.pumpWidget(const SizedBox());
     await settle(tester, 2);
   });

@@ -75,7 +75,7 @@ Each release is told apart by its build number.
 | ✅ | **Hidden chats** | Long-press the wordmark and authenticate to see them; their notifications show no name |
 | ✅ | **Panic wipe** | Hold 2 seconds, even from the lock screen. Destroys the keys and data, then closes the app |
 | ✅ | **Encrypted storage** | SQLite with every row sealed (XChaCha20-Poly1305), keys in Android Keystore, no backups |
-| ✅ | **Over-the-air updates** | Checked and downloaded through Tor, with changelogs |
+| ✅ | **Over-the-air updates** | Checks roughly every five minutes while running and connected, and on returning to the app with a short cooldown. Pull down on Home for an immediate check, or check, read what changed, download and install directly in Settings → Updates. Shows progress and errors in place. Everything downloads through Tor; Android confirms installation |
 | ✅ | **Send feedback** | Stars, what you think, and (if you like) your phone's model and Android version, sent straight to the developer's own Sanctum through Tor. Nobody sees who sent it |
 | ✅ | **Media** | Photos up to 10 MB, videos up to 20 MB, files up to 50 MB, end-to-end encrypted and stored encrypted. Photos are resized and lose hidden metadata like location. Nothing goes to your gallery by itself: use **Save to phone** on a photo, video, voice note or file to keep a copy (a Sanctum folder, no extra permission) |
 | ✅ | **Voice notes** | Hold the mic to record, release to send, slide left to cancel. Encrypted like any attachment |
