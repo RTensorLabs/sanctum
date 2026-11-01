@@ -9,24 +9,12 @@ third-party font requests or private credentials. Screenshots contain sample pro
 and conversations. APKs and source code remain on GitHub; website hosting does not
 change Sanctum's message or update routes.
 
-## Motion and the product film
+## Motion
 
-`particles.js` draws the new interactive constellation field. `motion.js` coordinates
-scroll choreography, the Pause effects button, and the local product film. There is
-no animation library or third-party video player. Particles and video stop when
-offscreen or the browser tab is hidden. Reduced motion and data-saving preferences
-keep the film on its poster until someone explicitly plays it. The film has its own
-play/pause and fullscreen buttons, and contains no audio.
-
-The 12-second film uses the real sample-profile screenshots already in `img/`.
-It is an animated product showcase, not a recording of live conversations. Both
-WebM and H.264 versions are local, under 1 MB each, with a small WebP poster.
-The browser chooses one video format and requests it only when needed.
-
-To recreate it, start the local preview below and run
-`node website/tools/render-film.cjs` from the repository root. The authoring tool
-requires Playwright, Chromium and ffmpeg. It is not part of deployment: Vercel
-serves the committed media files without a build or install step.
+`particles.js` draws the interactive constellation field. `motion.js` coordinates
+scroll choreography and the Pause effects button. Particle drawing stops offscreen
+and while the browser tab is hidden. Reduced-motion and data-saving preferences
+keep the effects still. App screenshots and the share preview are static local images.
 
 ## Current Vercel project
 
