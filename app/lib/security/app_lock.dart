@@ -86,8 +86,8 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
   bool _promptWhenVisible = true;
 
   /// 1 = fully locked, 0 = unlocked. Drives the unlock animation.
-  late final _lock = AnimationController(vsync: this, duration: const Duration(milliseconds: 650), value: 1);
-  late final _pulse = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
+  late final _lock = AnimationController(vsync: this, duration: Motion.navigation, value: 1);
+  late final _pulse = AnimationController(vsync: this, duration: const Duration(seconds: 2));
 
   /// A Sanctum PIN is set: the lock screen shows a number pad (and
   /// the decoy PIN works).
@@ -96,7 +96,14 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
   int _failures = 0;
   DateTime? _waitUntil;
   bool _checking = false;
+  bool _wrongPin = false;
   late final _shake = AnimationController(vsync: this, duration: const Duration(milliseconds: 420));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    Motion.repeat(context, _pulse, reverse: true);
+  }
 
   @override
   void initState() {
@@ -145,8 +152,11 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
       // After 5 wrong PINs, wait: 30 s, then doubling.
       if (_failures >= 5) _waitUntil = DateTime.now().add(Duration(seconds: 30 << (_failures - 5).clamp(0, 6)));
       HapticFeedback.heavyImpact();
-      _shake.forward(from: 0);
-      setState(() => _entered = '');
+      if (Motion.enabled(context)) _shake.forward(from: 0);
+      setState(() {
+        _entered = '';
+        _wrongPin = true;
+      });
       return;
     }
     _failures = 0;
@@ -157,7 +167,10 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
   void _digit(String d) {
     if (_entered.length >= 8 || _checking) return;
     HapticFeedback.selectionClick();
-    setState(() => _entered += d);
+    setState(() {
+      _entered += d;
+      _wrongPin = false;
+    });
   }
 
   @override
@@ -288,7 +301,8 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
     return AnimatedBuilder(
       animation: _lock,
       builder: (context, child) {
-        final t = Curves.easeInOutCubic.transform(_lock.value);
+        final t =
+            Motion.enabled(context) ? Curves.easeInOutCubic.transform(_lock.value) : (_lock.value == 1 ? 1.0 : 0.0);
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -335,7 +349,8 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
             AnimatedBuilder(
               animation: _shake,
               builder: (context, child) => Transform.translate(
-                offset: Offset(12 * (1 - _shake.value) * math.sin(_shake.value * math.pi * 6), 0),
+                offset: Offset(
+                    Motion.enabled(context) ? 8 * (1 - _shake.value) * math.sin(_shake.value * math.pi * 6) : 0, 0),
                 child: child,
               ),
               child: Row(
@@ -362,9 +377,11 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
                 child: Center(
                   child: waiting
                       ? Text('Too many tries: wait a moment', style: AppText.caption.copyWith(color: Palette.danger))
-                      : _failure == null
-                          ? const SizedBox.shrink()
-                          : _failureNote(message: 'Couldn\'t check your fingerprint. Enter your PIN or try again.'),
+                      : _wrongPin
+                          ? Text('That PIN did not match. Try again.', style: AppText.caption)
+                          : _failure == null
+                              ? const SizedBox.shrink()
+                              : _failureNote(message: 'Couldn\'t check your fingerprint. Enter your PIN or try again.'),
                 ),
               ),
             ),
@@ -446,7 +463,9 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
                       ),
                     )
                   : FadeTransition(
-                      opacity: Tween(begin: 0.35, end: 0.9).animate(_pulse),
+                      opacity: Motion.enabled(context)
+                          ? Tween(begin: 0.35, end: 0.9).animate(_pulse)
+                          : const AlwaysStoppedAnimation(1),
                       child: Text('TAP TO UNLOCK', style: AppText.overline),
                     ),
             ),

@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../src/rust/api/sigil.dart';
+import '../theme/tokens.dart';
 import 'sigil_look.dart';
 
 extension HslColorX on HslColor {
@@ -381,7 +382,13 @@ class _LivingSigilState extends State<LivingSigil> with SingleTickerProviderStat
   late final _controller = AnimationController(
     vsync: this,
     duration: Duration(seconds: widget.period),
-  )..repeat();
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    Motion.repeat(context, _controller);
+  }
 
   @override
   void dispose() {

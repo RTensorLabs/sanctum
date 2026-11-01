@@ -109,7 +109,7 @@ class _ChatStackState extends State<ChatStack> {
           );
         }
         item = Padding(padding: const EdgeInsets.only(bottom: Space.sm), child: item);
-        return animate ? _Entrance(key: ValueKey('in-${card.id}'), delay: i.clamp(0, 10) * 45, child: item) : item;
+        return animate ? _Entrance(key: ValueKey('in-${card.id}'), delay: i.clamp(0, 5) * 20, child: item) : item;
       },
     );
   }
@@ -167,10 +167,11 @@ class _StackedCard extends StatelessWidget {
 class ChatRoute<T> extends PageRouteBuilder<T> {
   ChatRoute({required WidgetBuilder builder})
       : super(
-          transitionDuration: Motion.slow,
-          reverseTransitionDuration: Motion.medium,
+          transitionDuration: Motion.navigation,
+          reverseTransitionDuration: Motion.arrival,
           pageBuilder: (context, _, _) => builder(context),
           transitionsBuilder: (context, animation, _, child) {
+            if (!Motion.enabled(context)) return FadeTransition(opacity: animation, child: child);
             final t = CurvedAnimation(parent: animation, curve: Motion.decelerate, reverseCurve: Motion.accelerate);
             return FadeTransition(
               opacity: CurvedAnimation(parent: animation, curve: const Interval(0, 0.6)),
@@ -221,7 +222,7 @@ class _Entrance extends StatefulWidget {
 }
 
 class _EntranceState extends State<_Entrance> with SingleTickerProviderStateMixin {
-  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
+  late final _c = AnimationController(vsync: this, duration: Motion.navigation);
   late final _curve = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
 
   @override
@@ -244,10 +245,10 @@ class _EntranceState extends State<_Entrance> with SingleTickerProviderStateMixi
       animation: _curve,
       child: widget.child,
       builder: (_, child) => Opacity(
-        opacity: _curve.value,
+        opacity: Motion.enabled(context) ? _curve.value : 1,
         child: Transform.translate(
-          offset: Offset(0, 40 * (1 - _curve.value)),
-          child: Transform.scale(scale: 0.96 + 0.04 * _curve.value, child: child),
+          offset: Offset(0, Motion.enabled(context) ? 12 * (1 - _curve.value) : 0),
+          child: Transform.scale(scale: Motion.enabled(context) ? 0.98 + 0.02 * _curve.value : 1, child: child),
         ),
       ),
     );

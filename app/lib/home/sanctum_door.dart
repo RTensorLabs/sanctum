@@ -108,7 +108,7 @@ class TappableDoorState extends State<TappableDoor> with SingleTickerProviderSta
 
   /// Swings the door open and shut.
   void knock() {
-    if (_swing.isAnimating) return;
+    if (!Motion.enabled(context) || _swing.isAnimating) return;
     _swing.forward(from: 0);
   }
 
@@ -164,7 +164,7 @@ class _Sanctuary extends StatefulWidget {
 }
 
 class _SanctuaryState extends State<_Sanctuary> with SingleTickerProviderStateMixin {
-  late final _open = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))..forward();
+  late final _open = AnimationController(vsync: this, duration: Motion.slow)..forward();
 
   @override
   void dispose() {
@@ -280,6 +280,12 @@ class _DoorRefreshState extends State<DoorRefresh> with TickerProviderStateMixin
   late final _hold = AnimationController(vsync: this, duration: Motion.medium);
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_busy) Motion.repeat(context, _glow, reverse: true);
+  }
+
+  @override
   void dispose() {
     _glow.dispose();
     _hold.dispose();
@@ -311,7 +317,7 @@ class _DoorRefreshState extends State<DoorRefresh> with TickerProviderStateMixin
       _busy = true;
     });
     _hold.forward();
-    _glow.repeat(reverse: true);
+    if (Motion.enabled(context)) _glow.repeat(reverse: true);
     try {
       await widget.onRefresh();
     } finally {

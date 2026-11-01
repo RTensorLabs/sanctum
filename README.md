@@ -99,6 +99,7 @@ Each release is told apart by its build number.
 | ✅ | **Typing** | "Asha is typing…" in friends' chats and groups. Sent only while you're both connected, never stored, and never what you type |
 | ✅ | **Settings** | Tap your sigil: your name, then tidy cards that each open their own page: appearance (light or dark, or like the phone, and an accent colour: your sigil's or your pick), moments, calls, lock, staying connected and nearby, updates, feedback and panic wipe |
 | ✅ | **The look** | One bold, rounded font throughout. A chat with new messages glows in its own colour and pulses when another arrives. Pull down on Chats or Friends and the Sanctum door opens to check for news. Chats greets you by name with the date, light mode is warm paper rather than cold white, empty screens have little drawings, and the bottom bar highlights the open tab with its name |
+| ✅ | **Reduced motion** | Follows the phone's accessibility setting: decorative movement stops, while useful progress stays accurate. Shorter transitions, gentler unread effects, one vibration per tab change, and a ring only for incoming calls. Emergency wipe always needs two uninterrupted seconds, whatever the animation setting |
 | ✅ | **Search** | Type in the home search box to find any message, poll, plan or file name across your chats. Done on the phone; hidden chats only while revealed |
 | ✅ | **Catch-up** | "While you were away": who wrote, who mentioned you, plans to answer and polls waiting for you |
 

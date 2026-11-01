@@ -158,7 +158,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       ),
       body: SafeArea(
         child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 380),
+          duration: Motion.duration(context, Motion.navigation),
           switchInCurve: Curves.easeOutCubic,
           transitionBuilder: (child, anim) => FadeTransition(
             opacity: anim,
@@ -194,130 +194,134 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           style: AppText.caption,
         ),
         const SizedBox(height: Space.lg),
-        if (_showMine)
-          _Section(
-            title: 'YOUR CODE',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: _name,
-                  textCapitalization: TextCapitalization.words,
-                  textInputAction: TextInputAction.done,
-                  // The code (and QR) carries the name, so keep it current.
-                  onChanged: (v) {
-                    _nameDebounce?.cancel();
-                    _nameDebounce = Timer(const Duration(milliseconds: 300), () => _nameChanged(v));
-                  },
-                  onSubmitted: _nameChanged,
-                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                  decoration: InputDecoration(
-                    labelText: 'Your name',
-                    helperText: 'Shown only to friends who read your code',
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Center(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: _myCode == null
-                        ? const SizedBox.square(dimension: 240)
-                        : Container(
-                            key: ValueKey(_myCode),
-                            width: 240,
-                            height: 240,
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(24),
-                              boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.3), blurRadius: 32)],
-                            ),
-                            child: QrImageView.withQr(
-                              qr: qrForCode(_myCode!),
-                              backgroundColor: Colors.white,
-                              padding: EdgeInsets.zero,
+        AnimatedSwitcher(
+          duration: Motion.duration(context, Motion.fast),
+          child: _showMine
+              ? _Section(
+                  key: const ValueKey('mine'),
+                  title: 'YOUR CODE',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextField(
+                        controller: _name,
+                        textCapitalization: TextCapitalization.words,
+                        textInputAction: TextInputAction.done,
+                        // The code (and QR) carries the name, so keep it current.
+                        onChanged: (v) {
+                          _nameDebounce?.cancel();
+                          _nameDebounce = Timer(const Duration(milliseconds: 300), () => _nameChanged(v));
+                        },
+                        onSubmitted: _nameChanged,
+                        onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                        decoration: InputDecoration(
+                          labelText: 'Your name',
+                          helperText: 'Shown only to friends who read your code',
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Center(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 250),
+                          child: _myCode == null
+                              ? const SizedBox.square(dimension: 240)
+                              : Container(
+                                  key: ValueKey(_myCode),
+                                  width: 240,
+                                  height: 240,
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(24),
+                                    boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.3), blurRadius: 32)],
+                                  ),
+                                  child: QrImageView.withQr(
+                                    qr: qrForCode(_myCode!),
+                                    backgroundColor: Colors.white,
+                                    padding: EdgeInsets.zero,
+                                  ),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      if (_myCode != null)
+                        SelectableText(
+                          codeGroups(_myCode!),
+                          textAlign: TextAlign.center,
+                          style: AppText.mono.copyWith(fontSize: 16),
+                        ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _myCode == null
+                                  ? null
+                                  : () => SharePlus.instance.share(
+                                        ShareParams(text: 'Add me on Sanctum:\n\n$_myCode'),
+                                      ),
+                              icon: const Icon(Icons.ios_share_rounded, size: 18),
+                              label: const Text('Share'),
                             ),
                           ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                if (_myCode != null)
-                  SelectableText(
-                    codeGroups(_myCode!),
-                    textAlign: TextAlign.center,
-                    style: AppText.mono.copyWith(fontSize: 16),
-                  ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _myCode == null
-                            ? null
-                            : () => SharePlus.instance.share(
-                                  ShareParams(text: 'Add me on Sanctum:\n\n$_myCode'),
-                                ),
-                        icon: const Icon(Icons.ios_share_rounded, size: 18),
-                        label: const Text('Share'),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _myCode == null
+                                  ? null
+                                  : () {
+                                      Clipboard.setData(ClipboardData(text: _myCode!));
+                                      _toast('Copied');
+                                    },
+                              icon: const Icon(Icons.copy_rounded, size: 18),
+                              label: const Text('Copy'),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _myCode == null
-                            ? null
-                            : () {
-                                Clipboard.setData(ClipboardData(text: _myCode!));
-                                _toast('Copied');
-                              },
-                        icon: const Icon(Icons.copy_rounded, size: 18),
-                        label: const Text('Copy'),
+                    ],
+                  ),
+                )
+              : _Section(
+                  key: const ValueKey('theirs'),
+                  title: 'THEIR CODE',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
+                        onPressed: _busy ? null : _scan,
+                        icon: const Icon(Icons.qr_code_scanner_rounded),
+                        label: const Text('Scan their QR'),
                       ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        if (!_showMine)
-          _Section(
-            title: 'THEIR CODE',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
-                  onPressed: _busy ? null : _scan,
-                  icon: const Icon(Icons.qr_code_scanner_rounded),
-                  label: const Text('Scan their QR'),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: _typed,
-                  minLines: 2,
-                  maxLines: 4,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  textCapitalization: TextCapitalization.characters,
-                  style: AppText.mono,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'or type / paste their code',
-                    suffixIcon:
-                        IconButton(tooltip: 'Paste', icon: const Icon(Icons.content_paste_rounded), onPressed: _paste),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: _typed,
+                        minLines: 2,
+                        maxLines: 4,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        textCapitalization: TextCapitalization.characters,
+                        style: AppText.mono,
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          hintText: 'or type / paste their code',
+                          suffixIcon: IconButton(
+                              tooltip: 'Paste', icon: const Icon(Icons.content_paste_rounded), onPressed: _paste),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      FilledButton.tonal(
+                        onPressed: _busy || _typed.text.trim().isEmpty ? null : () => _add(_typed.text, scanned: false),
+                        child: _busy
+                            ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Text('Add friend'),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 10),
-                FilledButton.tonal(
-                  onPressed: _busy || _typed.text.trim().isEmpty ? null : () => _add(_typed.text, scanned: false),
-                  child: _busy
-                      ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Add friend'),
-                ),
-              ],
-            ),
-          ),
+        ),
       ],
     );
   }
@@ -420,9 +424,10 @@ class _SigilEquation extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget appear(double from, Widget child) => TweenAnimationBuilder<double>(
           tween: Tween(begin: 0, end: 1),
-          duration: Duration(milliseconds: (from * 1000).round() + 500),
-          curve: Interval(from / (from + 0.5), 1, curve: Motion.decelerate),
-          builder: (_, v, c) => Opacity(opacity: v, child: Transform.scale(scale: 0.8 + 0.2 * v, child: c)),
+          duration: Motion.duration(context, Duration(milliseconds: (from * 200).round() + 220)),
+          curve: Motion.decelerate,
+          builder: (_, v, c) => Opacity(
+              opacity: v, child: Transform.scale(scale: Motion.enabled(context) ? 0.96 + 0.04 * v : 1, child: c)),
           child: child,
         );
     Widget small(SigilSpec spec, String label) => Column(
@@ -491,7 +496,7 @@ class _Badge extends StatelessWidget {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.child});
+  const _Section({super.key, required this.title, required this.child});
 
   final String title;
   final Widget child;

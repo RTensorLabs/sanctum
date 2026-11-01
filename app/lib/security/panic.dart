@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -40,36 +42,91 @@ Future<void> panicWipe() async {
 /// Press and hold to wipe: impossible to trigger by accident, quick on
 /// purpose.
 class HoldToWipe extends StatefulWidget {
-  const HoldToWipe({super.key});
+  const HoldToWipe({super.key, this.onWipe});
+
+  /// Optional action for an embedded hold control; otherwise wipes this phone.
+  final VoidCallback? onWipe;
 
   @override
   State<HoldToWipe> createState() => _HoldToWipeState();
 }
 
-class _HoldToWipeState extends State<HoldToWipe> with SingleTickerProviderStateMixin {
-  late final _hold = AnimationController(vsync: this, duration: const Duration(seconds: 2))
-    ..addStatusListener((s) {
-      if (s == AnimationStatus.completed) {
-        HapticFeedback.heavyImpact();
-        panicWipe();
+class _HoldToWipeState extends State<HoldToWipe> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  static const _duration = Duration(seconds: 2);
+  late final _hold =
+      AnimationController(vsync: this, duration: _duration, animationBehavior: AnimationBehavior.preserve);
+  Timer? _deadline;
+  int? _pointer;
+  Offset? _origin;
+  bool _fired = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  void _cancel() {
+    _deadline?.cancel();
+    _deadline = null;
+    _pointer = null;
+    _origin = null;
+    if (!_fired) _hold.reset();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) _cancel();
+  }
+
+  void _start(PointerDownEvent event) {
+    if (_pointer != null || _fired) return;
+    _pointer = event.pointer;
+    _origin = event.position;
+    HapticFeedback.mediumImpact();
+    _hold.forward(from: 0);
+    // Real elapsed time controls deletion; animation speed never does.
+    _deadline = Timer(_duration, () {
+      if (!mounted || _pointer == null || ModalRoute.of(context)?.isCurrent == false) {
+        _cancel();
+        return;
+      }
+      _fired = true;
+      HapticFeedback.heavyImpact();
+      if (widget.onWipe case final action?) {
+        action();
+      } else {
+        unawaited(panicWipe());
       }
     });
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _deadline?.cancel();
     _hold.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) {
-        HapticFeedback.mediumImpact();
-        _hold.forward();
+    return Listener(
+      onPointerDown: _start,
+      onPointerUp: (event) {
+        if (event.pointer == _pointer) _cancel();
       },
-      onTapUp: (_) => _hold.isCompleted ? null : _hold.reverse(),
-      onTapCancel: () => _hold.isCompleted ? null : _hold.reverse(),
+      onPointerCancel: (event) {
+        if (event.pointer == _pointer) _cancel();
+      },
+      onPointerMove: (event) {
+        final box = context.findRenderObject() as RenderBox;
+        if (event.pointer == _pointer &&
+            (!(Offset.zero & box.size).contains(box.globalToLocal(event.position)) ||
+                (event.position - _origin!).distance > kTouchSlop)) {
+          _cancel();
+        }
+      },
       child: AnimatedBuilder(
         animation: _hold,
         builder: (context, _) => Container(

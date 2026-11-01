@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -87,7 +86,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   final _typing = <String, DateTime>{};
   Timer? _typingTick;
   DateTime _typingSent = DateTime(0);
-  late final _wipe = AnimationController(vsync: this, duration: Motion.slow);
+  late final _wipe = AnimationController(vsync: this, duration: Motion.arrival);
 
   /// What's typed but not sent is kept (saved a moment after typing stops).
   Timer? _draftSave;
@@ -958,11 +957,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         opacity: 1 - t,
                         child: Transform.scale(
                           scale: 1 - 0.06 * t,
-                          // Blur only while actually wiping.
-                          child: t == 0
-                              ? child
-                              : ImageFiltered(
-                                  imageFilter: ImageFilter.blur(sigmaX: 10 * t, sigmaY: 10 * t), child: child),
+                          child: child,
                         ),
                       );
                     },
@@ -1485,7 +1480,13 @@ class _RotatingImage extends StatefulWidget {
 }
 
 class _RotatingImageState extends State<_RotatingImage> with SingleTickerProviderStateMixin {
-  late final _turn = AnimationController(vsync: this, duration: const Duration(seconds: 160))..repeat();
+  late final _turn = AnimationController(vsync: this, duration: const Duration(seconds: 160));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    Motion.repeat(context, _turn);
+  }
 
   @override
   void dispose() {
@@ -1537,9 +1538,12 @@ class _Header extends StatelessWidget {
             icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
             onPressed: onBack,
           ),
-          Hero(
-            tag: 'emblem-${card.id}',
-            child: ChatEmblem(sigil: card.sigil, group: card.group, size: 40, border: false),
+          HeroMode(
+            enabled: Motion.enabled(context),
+            child: Hero(
+              tag: 'emblem-${card.id}',
+              child: ChatEmblem(sigil: card.sigil, group: card.group, size: 40, border: false),
+            ),
           ),
           const SizedBox(width: Space.md),
           Expanded(
@@ -1817,7 +1821,7 @@ class _Bubble extends StatefulWidget {
 }
 
 class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
-  late final _c = AnimationController(vsync: this, duration: Motion.medium, value: widget.animate ? 0 : 1)..forward();
+  late final _c = AnimationController(vsync: this, duration: Motion.arrival, value: widget.animate ? 0 : 1)..forward();
   late final _curve = CurvedAnimation(parent: _c, curve: Motion.emphasized);
 
   @override
@@ -2010,16 +2014,17 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
         onLongPress: widget.onLongPress,
         onDoubleTap: react == null ? null : () => react('❤️'),
         child: AnimatedScale(
-          scale: widget.highlight ? 1.04 : 1,
+          scale: widget.highlight && Motion.enabled(context) ? 1.02 : 1,
           duration: Motion.medium,
           curve: Motion.emphasized,
           child: FadeTransition(
-            opacity: _curve,
+            opacity: Motion.enabled(context) ? _curve : const AlwaysStoppedAnimation(1),
             child: ScaleTransition(
               alignment: mine ? Alignment.bottomRight : Alignment.bottomLeft,
-              scale: Tween(begin: 0.9, end: 1.0).animate(_curve),
+              scale: Tween(begin: Motion.enabled(context) ? 0.98 : 1.0, end: 1.0).animate(_curve),
               child: SlideTransition(
-                position: Tween(begin: const Offset(0, 0.25), end: Offset.zero).animate(_curve),
+                position: Tween(begin: Motion.enabled(context) ? const Offset(0, 0.06) : Offset.zero, end: Offset.zero)
+                    .animate(_curve),
                 child: withReactions,
               ),
             ),
@@ -2633,7 +2638,8 @@ class _ReactionPill extends StatelessWidget {
         triggerMode: TooltipTriggerMode.longPress,
         child: GestureDetector(
           onTap: onTap,
-          child: Container(
+          child: AnimatedContainer(
+            duration: Motion.duration(context, Motion.fast),
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
             decoration: BoxDecoration(
               color: reaction.mine
@@ -2663,7 +2669,13 @@ class _TypingRow extends StatefulWidget {
 }
 
 class _TypingRowState extends State<_TypingRow> with SingleTickerProviderStateMixin {
-  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    Motion.repeat(context, _c);
+  }
 
   @override
   void dispose() {

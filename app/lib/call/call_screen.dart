@@ -283,7 +283,11 @@ class _CallScreenState extends State<CallScreen> {
                     const Spacer(),
                   ] else ...[
                     const Spacer(),
-                    _Emblem(sigil: anonymous ? null : widget.sigil, accent: accent, ended: ended),
+                    _IncomingPulse(
+                      active: ringing,
+                      color: accent,
+                      child: _Emblem(sigil: anonymous ? null : widget.sigil, accent: accent, ended: ended),
+                    ),
                     const SizedBox(height: Space.xl),
                     Text(
                       name,
@@ -502,6 +506,66 @@ class _Picture extends StatelessWidget {
       );
 }
 
+/// A quiet ring for incoming calls; never runs during an active call.
+class _IncomingPulse extends StatefulWidget {
+  const _IncomingPulse({required this.active, required this.color, required this.child});
+  final bool active;
+  final Color color;
+  final Widget child;
+  @override
+  State<_IncomingPulse> createState() => _IncomingPulseState();
+}
+
+class _IncomingPulseState extends State<_IncomingPulse> with SingleTickerProviderStateMixin {
+  late final _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600));
+  void _sync() {
+    if (widget.active && Motion.enabled(context)) {
+      Motion.repeat(context, _pulse, reverse: true);
+    } else {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(_IncomingPulse old) {
+    super.didUpdateWidget(old);
+    _sync();
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _pulse,
+        child: widget.child,
+        builder: (context, child) => Stack(alignment: Alignment.center, children: [
+          if (widget.active && Motion.enabled(context))
+            Positioned.fill(
+                child: IgnorePointer(
+                    child: Transform.scale(
+              key: const ValueKey('incoming-call-ring'),
+              scale: 1 + 0.06 * _pulse.value,
+              child: DecoratedBox(
+                  decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: widget.color.withValues(alpha: 0.25 * (1 - _pulse.value)), width: 2))),
+            ))),
+          child!,
+        ]),
+      );
+}
+
 /// The pair's sigil in a ring (or a plain call icon when it mustn't say
 /// who).
 class _Emblem extends StatelessWidget {
@@ -600,7 +664,11 @@ class _RoundButton extends StatelessWidget {
                 HapticFeedback.selectionClick();
                 onTap();
               },
-              child: SizedBox.square(dimension: 64, child: Icon(icon, size: 28, color: foreground)),
+              child: SizedBox.square(
+                  dimension: 64,
+                  child: AnimatedSwitcher(
+                      duration: Motion.duration(context, Motion.fast),
+                      child: Icon(icon, key: ValueKey((icon, on)), size: 28, color: foreground))),
             ),
           ),
           const SizedBox(height: Space.sm),

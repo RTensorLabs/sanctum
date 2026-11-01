@@ -60,7 +60,9 @@ class ChatTile extends StatelessWidget {
                           count: n,
                           color: card.sigil.look.accent.color,
                           square: card.group,
-                          child: Hero(tag: 'emblem-${card.id}', child: _Emblem(card: card)),
+                          child: HeroMode(
+                              enabled: Motion.enabled(context),
+                              child: Hero(tag: 'emblem-${card.id}', child: _Emblem(card: card))),
                         ),
                         if (card.friendChatId != null)
                           Positioned(right: 0, bottom: 0, child: OnlineDot(chatId: card.friendChatId!)),
@@ -299,12 +301,12 @@ class UnreadGlow extends StatefulWidget {
 }
 
 class _UnreadGlowState extends State<UnreadGlow> with SingleTickerProviderStateMixin {
-  late final _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+  late final _pulse = AnimationController(vsync: this, duration: Motion.unread);
 
   @override
   void didUpdateWidget(UnreadGlow old) {
     super.didUpdateWidget(old);
-    if (widget.count > old.count) _pulse.forward(from: 0);
+    if (widget.count > old.count && !_pulse.isAnimating && Motion.enabled(context)) _pulse.forward(from: 0);
   }
 
   @override
@@ -319,7 +321,7 @@ class _UnreadGlowState extends State<UnreadGlow> with SingleTickerProviderStateM
     final shape = widget.square ? BoxShape.rectangle : BoxShape.circle;
     final radius = widget.square ? BorderRadius.circular(14) : null;
     return AnimatedContainer(
-      duration: Motion.slow,
+      duration: Motion.duration(context, Motion.slow),
       curve: Motion.emphasized,
       decoration: BoxDecoration(
         shape: shape,
@@ -327,7 +329,7 @@ class _UnreadGlowState extends State<UnreadGlow> with SingleTickerProviderStateM
         boxShadow: [
           BoxShadow(
             color: widget.color.withValues(alpha: on ? 0.55 : 0),
-            blurRadius: on ? 18 : 0,
+            blurRadius: on ? 10 : 0,
             spreadRadius: on ? 1 : 0,
           ),
         ],
@@ -337,8 +339,8 @@ class _UnreadGlowState extends State<UnreadGlow> with SingleTickerProviderStateM
         child: widget.child,
         builder: (context, child) {
           // The same tree every frame, so the emblem is never rebuilt.
-          final t = _pulse.isAnimating ? _pulse.value : 1.0;
-          final bounce = 1 + 0.14 * math.sin(math.pi * Curves.easeOut.transform((t / 0.45).clamp(0.0, 1.0)));
+          final t = Motion.enabled(context) && _pulse.isAnimating ? _pulse.value : 1.0;
+          final bounce = 1 + 0.04 * math.sin(math.pi * Curves.easeOut.transform((t / 0.45).clamp(0.0, 1.0)));
           final ripple = Curves.easeOutCubic.transform(t);
           return Stack(
             clipBehavior: Clip.none,

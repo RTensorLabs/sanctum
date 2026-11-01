@@ -197,7 +197,8 @@ class _Choice extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(Radii.sm),
-          child: Container(
+          child: AnimatedContainer(
+            duration: Motion.duration(context, Motion.fast),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(Radii.sm),
               border: Border.all(color: border, width: option.mine ? 1.6 : 1),
@@ -209,7 +210,7 @@ class _Choice extends StatelessWidget {
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: AnimatedFractionallySizedBox(
-                      duration: Motion.medium,
+                      duration: Motion.duration(context, Motion.medium),
                       curve: Motion.emphasized,
                       widthFactor: share,
                       heightFactor: 1,

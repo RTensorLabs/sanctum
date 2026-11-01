@@ -58,7 +58,9 @@ class Restyler extends StatefulWidget {
   State<Restyler> createState() => _RestylerState();
 }
 
-class _RestylerState extends State<Restyler> with WidgetsBindingObserver {
+class _RestylerState extends State<Restyler> with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  late final _fade = AnimationController(vsync: this, duration: Motion.fast, value: 1);
+
   @override
   void initState() {
     super.initState();
@@ -70,6 +72,7 @@ class _RestylerState extends State<Restyler> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _fade.dispose();
     WidgetsBinding.instance.removeObserver(this);
     Appearance.theme.removeListener(_restyle);
     Appearance.accent.removeListener(_restyle);
@@ -87,6 +90,7 @@ class _RestylerState extends State<Restyler> with WidgetsBindingObserver {
 
   void _restyle() {
     _apply();
+    if (Motion.enabled(context)) _fade.forward(from: 0.85);
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
       void rebuild(Element e) {
@@ -99,5 +103,8 @@ class _RestylerState extends State<Restyler> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(context);
+  Widget build(BuildContext context) => FadeTransition(
+        opacity: Motion.enabled(context) ? _fade : const AlwaysStoppedAnimation(1),
+        child: widget.builder(context),
+      );
 }

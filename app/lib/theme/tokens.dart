@@ -1,5 +1,4 @@
-import 'package:flutter/animation.dart';
-import 'package:flutter/painting.dart';
+import 'package:flutter/widgets.dart';
 
 /// The Sigil design system: every spacing, radius, colour, type style and
 /// motion value the app uses. Screens use these, never one-off numbers.
@@ -116,12 +115,27 @@ abstract final class AppText {
       TextStyle(fontFamily: _mono, fontSize: 15, fontWeight: FontWeight.w500, letterSpacing: 1.2, height: 1.6);
 }
 
-/// Material 3 "emphasized" motion. Only GPU-cheap properties (opacity,
-/// transform) are animated, so transitions hold 60–120 fps.
+/// Shared timings for purposeful motion, with the phone's reduced-motion preference.
 abstract final class Motion {
   static const fast = Duration(milliseconds: 160);
   static const medium = Duration(milliseconds: 280);
   static const slow = Duration(milliseconds: 420);
+  static const arrival = Duration(milliseconds: 180);
+  static const navigation = Duration(milliseconds: 240);
+  static const unread = Duration(milliseconds: 420);
+  static bool enabled(BuildContext context) => !(MediaQuery.maybeOf(context)?.disableAnimations ??
+      WidgetsBinding.instance.platformDispatcher.accessibilityFeatures.disableAnimations);
+  static Duration duration(BuildContext context, Duration value) => enabled(context) ? value : Duration.zero;
+
+  /// Repeating decoration must explicitly stop when the phone reduces motion.
+  static void repeat(BuildContext context, AnimationController controller, {bool reverse = false}) {
+    if (enabled(context)) {
+      if (!controller.isAnimating) controller.repeat(reverse: reverse);
+    } else {
+      controller.stop();
+      controller.value = 0;
+    }
+  }
 
   static const emphasized = Cubic(0.2, 0, 0, 1);
   static const decelerate = Cubic(0.05, 0.7, 0.1, 1);

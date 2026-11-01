@@ -124,8 +124,15 @@ void main() {
 
     // Temp chats ("Just me": a widget test runs a single phone; the Rust
     // tests cover temp chats between two phones).
+    var tabHaptics = 0;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'HapticFeedback.vibrate') tabHaptics++;
+      return null;
+    });
     await tester.tap(find.byTooltip('Temp'));
     await settle(tester);
+    expect(tabHaptics, 1, reason: 'one tab change gives one haptic');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
     await shot(tester, '2-temp-empty');
     for (var i = 0; i < 2; i++) {
       await tester.tap(find.text('New temp chat'));

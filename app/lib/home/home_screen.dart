@@ -609,12 +609,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _goTo(int page) {
-    HapticFeedback.selectionClick();
+    if (page == _page.round()) return;
     // Far tabs jump, instead of sliding past everything between.
-    if ((page - _page).abs() > 1.5) {
+    if (!Motion.enabled(context) || (page - _page).abs() > 1.5) {
       _pages.jumpToPage(page);
     } else {
-      _pages.animateToPage(page, duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
+      _pages.animateToPage(page, duration: Motion.navigation, curve: Motion.decelerate);
     }
   }
 
@@ -1018,7 +1018,6 @@ class _NavTab extends StatelessWidget {
         excludeFromSemantics: true,
         child: InkResponse(
           onTap: () {
-            if (!selected) HapticFeedback.selectionClick();
             onTap();
           },
           radius: 32,

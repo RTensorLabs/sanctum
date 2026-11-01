@@ -144,12 +144,14 @@ void main() {
     });
     var answered = 0, ended = 0;
 
-    Future<void> show(CallInfo info, {bool locked = false}) async {
+    Future<void> show(CallInfo info, {bool locked = false, bool reduced = false}) async {
       await tester.pumpWidget(RepaintBoundary(
         key: _shotKey,
         child: Restyler(
           builder: (_) => MaterialApp(
             theme: sanctumTheme(accent: sigil.accent.color),
+            builder: (context, child) =>
+                MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: reduced), child: child!),
             home: CallScreen(
               info: info,
               sigil: sigil,
@@ -170,10 +172,14 @@ void main() {
     await show(_call(CallPhaseView.ringing, outgoing: false));
     expect(find.text('Asha'), findsOneWidget);
     expect(find.text('Incoming call'), findsOneWidget);
+    expect(find.byKey(const ValueKey('incoming-call-ring')), findsOneWidget);
     await _shot(tester, 'call-1-incoming');
     await tester.tap(find.byIcon(Icons.call_rounded));
     await tester.tap(find.byIcon(Icons.call_end_rounded));
     expect((answered, ended), (1, 1));
+
+    await show(_call(CallPhaseView.ringing, outgoing: false), reduced: true);
+    expect(find.byKey(const ValueKey('incoming-call-ring')), findsNothing);
 
     // Locked, it doesn't say who.
     await show(_call(CallPhaseView.ringing, outgoing: false), locked: true);
@@ -183,6 +189,7 @@ void main() {
     expect(find.text('Connecting privately…'), findsOneWidget);
 
     await show(_call(CallPhaseView.active));
+    expect(find.byKey(const ValueKey('incoming-call-ring')), findsNothing);
     expect(find.text('4:12'), findsOneWidget);
     expect(find.text('Mute'), findsOneWidget);
     expect(find.text('Earpiece'), findsOneWidget);
