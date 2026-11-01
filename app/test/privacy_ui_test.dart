@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -62,6 +63,8 @@ void main() {
     expect(find.text('Queued on this phone'), findsOneWidget);
     expect(find.text('Delivered'), findsOneWidget);
     expect(find.text('Identity not verified'), findsOneWidget);
+    expect(tester.renderObject<RenderParagraph>(find.text('Asha')).didExceedMaxLines, isFalse);
+    expect(tester.getSize(find.text('Identity not verified')).height, lessThan(60));
     NetBus.instance.online.value = {10};
     await settle(tester);
     expect(find.text('Sending'), findsOneWidget);
@@ -101,8 +104,9 @@ void main() {
       home: HomeScreen(publicKey: key, mySigil: sigil),
     ));
     await settle(tester, 20);
-    expect(find.text('Your circle starts with one friend'), findsOneWidget);
+    expect(find.text('Add your first friend'), findsOneWidget);
     expect(find.text('Add a friend'), findsOneWidget);
+    expect(tester.renderObject<RenderParagraph>(find.text('Sanctum')).didExceedMaxLines, isFalse);
     final target = tester.getSize(find.byTooltip('Settings'));
     expect(target.width, greaterThanOrEqualTo(48));
     expect(target.height, greaterThanOrEqualTo(48));

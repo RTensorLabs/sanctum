@@ -193,7 +193,7 @@ class _Trailing extends StatelessWidget {
           builder: (context, unread, _) {
             final n = unread[card.temp ? Notifier.tempKey(card.id) : Notifier.chatKey(card.id)] ?? 0;
             return Semantics(
-                label: n > 0 ? '$n unread messages' : null,
+                label: n > 0 ? 'Unread messages: $n' : null,
                 excludeSemantics: true,
                 child: AnimatedScale(
                   scale: n > 0 ? 1 : 0,

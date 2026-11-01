@@ -230,7 +230,7 @@ void main() {
     await settle(tester, 14);
 
     // Add a friend: the screen shows our code and a way to read theirs.
-    expect(find.text('Your circle starts with one friend'), findsOneWidget);
+    expect(find.text('Add your first friend'), findsOneWidget);
     expect(tester.getSize(find.byTooltip('Settings')).width, greaterThanOrEqualTo(48));
     expect(tester.getSize(find.byTooltip('Settings')).height, greaterThanOrEqualTo(48));
     await shot(tester, '6-first-friend');

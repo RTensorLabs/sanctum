@@ -1641,99 +1641,89 @@ class _Header extends StatelessWidget {
   final VoidCallback? onCall;
   final VoidCallback? onVideoCall;
 
+  Widget _connection({required bool roomy}) => ValueListenableBuilder<Set<int>>(
+        valueListenable: NetBus.instance.online,
+        builder: (context, online, _) {
+          final isOnline = card.friend && online.contains(card.friendChatId);
+          return AnimatedSwitcher(
+            duration: Motion.fast,
+            child: Row(
+              key: ValueKey(isOnline),
+              children: [
+                if (isOnline) ...[
+                  Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(color: OnlineDot.color, shape: BoxShape.circle)),
+                  const SizedBox(width: 5),
+                ],
+                Flexible(
+                    child: Text(
+                  isOnline
+                      ? (card.temp ? 'Online · burns after 24h' : 'Online')
+                      : card.temp
+                          ? 'Temp · burns after 24h'
+                          : card.note ?? 'Only on this device',
+                  maxLines: roomy ? null : 1,
+                  overflow: roomy ? null : TextOverflow.ellipsis,
+                  style: AppText.micro.copyWith(color: isOnline ? OnlineDot.color : null),
+                )),
+              ],
+            ),
+          );
+        },
+      );
+
   @override
   Widget build(BuildContext context) {
+    final roomy = MediaQuery.textScalerOf(context).scale(16) > 22;
+    final showIdentity = card.friend && !card.temp && !card.group;
+    final identity = Text(card.verified ? 'Identity verified' : 'Identity not verified', style: AppText.micro);
+    final quickActions = <Widget>[
+      if (onInfo != null)
+        IconButton(tooltip: 'Group info', icon: const Icon(Icons.groups_rounded, size: 20), onPressed: onInfo),
+      if (onVideoCall != null)
+        IconButton(tooltip: 'Video call', icon: const Icon(Icons.videocam_rounded, size: 21), onPressed: onVideoCall),
+      if (onCall != null)
+        IconButton(tooltip: 'Call', icon: const Icon(Icons.call_rounded, size: 20), onPressed: onCall),
+    ];
     return Container(
       padding: const EdgeInsets.fromLTRB(Space.xs, Space.xs, Space.sm, Space.sm),
       decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Palette.outline))),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Back',
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-            onPressed: onBack,
-          ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          IconButton(tooltip: 'Back', icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20), onPressed: onBack),
           HeroMode(
             enabled: Motion.enabled(context),
             child: Hero(
-              tag: 'emblem-${card.id}',
-              child: ChatEmblem(sigil: card.sigil, group: card.group, size: 40, border: false),
-            ),
+                tag: 'emblem-${card.id}',
+                child: ChatEmblem(sigil: card.sigil, group: card.group, size: 40, border: false)),
           ),
           const SizedBox(width: Space.md),
           Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onInfo,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(card.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppText.heading),
-                      ),
-                      if (card.disappearSeconds > 0) ...[
-                        const SizedBox(width: Space.xs),
-                        Icon(Icons.timer_rounded, size: 14, color: Palette.textMuted),
-                      ],
-                      if (card.muted) ...[
-                        const SizedBox(width: Space.xs),
-                        Icon(Icons.notifications_off_rounded, size: 14, color: Palette.textFaint),
-                      ],
-                    ],
-                  ),
-                  if (card.friend && !card.temp && !card.group)
-                    Text(card.verified ? 'Identity verified' : 'Identity not verified', style: AppText.micro),
-                  const SizedBox(height: 2),
-                  ValueListenableBuilder<Set<int>>(
-                    valueListenable: NetBus.instance.online,
-                    builder: (context, online, _) {
-                      final isOnline = card.friend && online.contains(card.friendChatId);
-                      return AnimatedSwitcher(
-                        duration: Motion.fast,
-                        child: Row(
-                          key: ValueKey(isOnline),
-                          children: [
-                            if (isOnline) ...[
-                              Container(
-                                width: 7,
-                                height: 7,
-                                decoration: const BoxDecoration(color: OnlineDot.color, shape: BoxShape.circle),
-                              ),
-                              const SizedBox(width: 5),
-                            ],
-                            Flexible(
-                              child: Text(
-                                isOnline
-                                    ? (card.temp ? 'Online · burns after 24h' : 'Online')
-                                    : card.temp
-                                        ? 'Temp · burns after 24h'
-                                        : card.note ?? 'Only on this device',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: AppText.micro.copyWith(color: isOnline ? OnlineDot.color : null),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+              child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onInfo,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Flexible(child: Text(card.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppText.heading)),
+                if (card.disappearSeconds > 0) ...[
+                  const SizedBox(width: Space.xs),
+                  Icon(Icons.timer_rounded, size: 14, color: Palette.textMuted),
                 ],
-              ),
-            ),
-          ),
-          if (onInfo != null)
-            IconButton(tooltip: 'Group info', icon: const Icon(Icons.groups_rounded, size: 20), onPressed: onInfo),
-          if (onVideoCall != null)
-            IconButton(
-              tooltip: 'Video call',
-              icon: const Icon(Icons.videocam_rounded, size: 21),
-              onPressed: onVideoCall,
-            ),
-          if (onCall != null)
-            IconButton(tooltip: 'Call', icon: const Icon(Icons.call_rounded, size: 20), onPressed: onCall),
+                if (card.muted) ...[
+                  const SizedBox(width: Space.xs),
+                  Icon(Icons.notifications_off_rounded, size: 14, color: Palette.textFaint),
+                ],
+              ]),
+              if (!roomy) ...[
+                if (showIdentity) identity,
+                const SizedBox(height: 2),
+                _connection(roomy: false),
+              ],
+            ]),
+          )),
+          if (!roomy) ...quickActions,
           PopupMenuButton<String>(
             tooltip: 'More',
             icon: const Icon(Icons.more_vert_rounded, size: 20),
@@ -1741,15 +1731,21 @@ class _Header extends StatelessWidget {
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'privacy', child: Text('Chat privacy')),
               if (onMenu != null)
-                PopupMenuItem(
-                  value: 'mute',
-                  child: Text(card.muted ? 'Notifications: off' : 'Mute notifications'),
-                ),
+                PopupMenuItem(value: 'mute', child: Text(card.muted ? 'Notifications: off' : 'Mute notifications')),
               if (onMenu != null) const PopupMenuItem(value: 'scheduled', child: Text('Scheduled messages')),
             ],
           ),
-        ],
-      ),
+        ]),
+        if (roomy)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Space.md),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (showIdentity) identity,
+              _connection(roomy: true),
+              if (quickActions.isNotEmpty) Align(alignment: Alignment.centerRight, child: Wrap(children: quickActions)),
+            ]),
+          ),
+      ]),
     );
   }
 }

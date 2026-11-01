@@ -713,6 +713,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final largeText = MediaQuery.textScalerOf(context).scale(16) > 22;
     return Scaffold(
       body: Column(
         children: [
@@ -727,7 +728,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       // Long-press: reveal hidden chats (after a biometric check).
                       // Tap: the door opens (and seven quick taps…).
                       Flexible(
-                          flex: 2,
+                          flex: largeText ? 1 : 2,
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onLongPress: _toggleHidden,
@@ -737,16 +738,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               children: [
                                 TappableDoor(key: _door, size: 22),
                                 const SizedBox(width: 6),
-                                const Flexible(
+                                Flexible(
                                     child: Text('Sanctum',
-                                        style: AppText.display, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                        style: largeText ? AppText.heading : AppText.display,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis)),
                               ],
                             ),
                           )),
-                      const SizedBox(width: Space.md),
-                      // Takes the free space, so the buttons stay at the right edge;
-                      // the pill shrinks first on a narrow screen.
-                      const Expanded(child: Align(alignment: Alignment.centerLeft, child: _NetPill())),
+                      if (!largeText) ...[
+                        const SizedBox(width: Space.md),
+                        const Expanded(child: Align(alignment: Alignment.centerLeft, child: _NetPill())),
+                      ],
                       AnimatedSwitcher(
                         duration: Motion.fast,
                         child: _onTemp && _temp.isNotEmpty
@@ -786,6 +789,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
+                if (largeText)
+                  const Padding(
+                      padding: EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.sm),
+                      child: Align(alignment: Alignment.centerLeft, child: _NetPill())),
                 AnimatedSize(
                   duration: Motion.medium,
                   curve: Motion.decelerate,
@@ -821,11 +828,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           borderRadius: BorderRadius.circular(Radii.md),
                           border: Border.all(color: Palette.outline)),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('Your circle starts with one friend', style: AppText.heading),
+                        Text('Add your first friend', style: AppText.heading),
                         const SizedBox(height: Space.xs),
-                        Text(
-                            'Add someone you trust. Then compare your chat’s sigil together to check it is really them.',
-                            style: AppText.caption),
+                        Text('Add someone you trust, then verify their code together.', style: AppText.caption),
                       ]),
                     ),
                   ),
@@ -1037,8 +1042,8 @@ class _NavTab extends StatelessWidget {
       value: count == 0
           ? null
           : label == 'Friends'
-              ? '$count pending friend requests'
-              : '$count conversations with unread messages',
+              ? 'Pending friend requests: $count'
+              : 'Unread conversations: $count',
       excludeSemantics: true,
       child: Tooltip(
         message: label,
@@ -1119,26 +1124,22 @@ class _Greeting extends StatelessWidget {
       _ => 'Up late',
     };
     final first = name.trim().split(RegExp(r'\s+')).first;
+    final largeText = MediaQuery.textScalerOf(context).scale(16) > 22;
+    final greeting = Text.rich(
+      TextSpan(children: [
+        TextSpan(text: first.isEmpty ? hello : '$hello, '),
+        if (first.isNotEmpty) TextSpan(text: first, style: TextStyle(color: Palette.gold)),
+      ]),
+      maxLines: largeText ? null : 1,
+      overflow: largeText ? null : TextOverflow.ellipsis,
+      style: AppText.heading,
+    );
+    final date = Text('${_days[now.weekday - 1]}, ${now.day} ${_months[now.month - 1]}', style: AppText.micro);
     return Padding(
       padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.sm),
-      child: Row(
-        children: [
-          Expanded(
-              child: Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(text: first.isEmpty ? hello : '$hello, '),
-                if (first.isNotEmpty) TextSpan(text: first, style: TextStyle(color: Palette.gold)),
-              ],
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppText.heading,
-          )),
-          const SizedBox(width: Space.sm),
-          Text('${_days[now.weekday - 1]}, ${now.day} ${_months[now.month - 1]}', style: AppText.micro),
-        ],
-      ),
+      child: largeText
+          ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [greeting, date])
+          : Row(children: [Expanded(child: greeting), const SizedBox(width: Space.sm), date]),
     );
   }
 }
