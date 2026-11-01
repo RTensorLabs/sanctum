@@ -1,229 +1,169 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sanctum: private chat for close friends</title>
-<meta name="description" content="Sanctum is a free Android app for messages, calls and photos with the people closest to you. No servers, no accounts, nothing tracked.">
-<meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#0A0D18" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#EEE7DA" media="(prefers-color-scheme: light)">
-<link rel="icon" href="img/icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Private messages, calls and plans for your close circle. Sanctum is a free Android app from RTensorLabs, with end-to-end encryption and Tor by default.">
+  <meta name="color-scheme" content="dark light">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="theme-color" content="#0b0c0f">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Sanctum — your people, your private space">
+  <meta property="og:description" content="Encrypted messages, calls and plans. No account, no phone number, no ads. An RTensorLabs project.">
+  <title>Sanctum — your people, your private space</title>
+  <link rel="icon" href="img/icon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/Figtree-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css">
+  <script src="site.js" defer></script>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
+<svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0ZM7 9h9M7 13h6"/></symbol>
+  <symbol id="i-call" viewBox="0 0 24 24"><path d="m5 3 4 1 1 5-3 2a15 15 0 0 0 6 6l2-3 5 1 1 4c0 2-2 3-4 2A24 24 0 0 1 3 7c-1-2 0-4 2-4Z"/></symbol>
+  <symbol id="i-plan" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18m-14 5 3 2 6-4"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="5" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M5 7v8a4 4 0 0 0 8 0V9a4 4 0 0 1 8 0v8"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 18h4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 13A9 9 0 0 1 11 3a9 9 0 1 0 10 10Z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+</svg>
 
-<header class="top">
-  <a class="brand" href="#top" aria-label="Sanctum, back to the top">
-    <img class="logo" src="img/icon.svg" width="32" height="32" alt="">
-    <span>Sanctum</span>
-  </a>
-  <nav aria-label="On this page">
-    <a href="#inside">What's inside</a>
-    <a href="#private">How it's private</a>
-    <a href="#questions">Questions</a>
-    <a href="https://github.com/Tejascodex001/sanctum">Source code</a>
-    <a class="nav-download" href="https://github.com/Tejascodex001/sanctum/releases/latest/download/sanctum.apk">Download</a>
-  </nav>
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="brand" href="#main" aria-label="Sanctum by RTensorLabs, home">
+      <img src="img/icon.svg" width="36" height="36" alt="">
+      <span>Sanctum<small>by RTensorLabs</small></span>
+    </a>
+    <nav id="site-nav" class="site-nav" aria-label="Main navigation">
+      <a href="#features">The app</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#questions">Questions</a>
+      <a href="https://github.com/Tejascodex001/sanctum">Source code <span aria-hidden="true">↗</span></a>
+      <a class="button button-small" href="https://github.com/Tejascodex001/sanctum/releases/latest/download/sanctum.apk">Get Sanctum <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-button theme-toggle" type="button" aria-label="Switch to light theme" title="Switch theme"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg></button>
+      <button class="icon-button menu-toggle" type="button" aria-label="Open navigation" aria-controls="site-nav" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg></button>
+    </div>
+  </div>
 </header>
 
-<main id="top">
+<main id="main">
+  <section class="hero container" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <p class="release-badge"><span aria-hidden="true"></span> Private chat for your close circle.</p>
+      <h1 id="hero-title">Your people.<br>Your <em>own space.</em></h1>
+      <p class="hero-description">Messages, calls and plans for the people you trust. Encrypted on your phones, routed through Tor by default.</p>
+      <p class="hero-note">No account. No phone number. No ads.</p>
+      <div class="button-pair">
+        <a class="button" href="https://github.com/Tejascodex001/sanctum/releases/latest/download/sanctum.apk"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg> Download for Android</a>
+        <a class="button button-secondary" href="#features">Explore the app <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+      </div>
+      <p class="download-note">Free beta · Android 7 and later · <a href="#install">Installation help</a></p>
+    </div>
+    <div class="hero-preview">
+      <div class="phone-scene">
+        <div class="orbit orbit-one" aria-hidden="true"></div><div class="orbit orbit-two" aria-hidden="true"></div>
+        <figure class="device device-back"><img data-screenshot data-dark="img/app-home-dark.webp" data-light="img/app-home-light.webp" src="img/app-home-dark.webp" width="432" height="936" alt="Sanctum's chat list, showing example conversations and personal sigil artwork."></figure>
+        <figure class="device device-front"><img data-screenshot data-dark="img/app-chat-dark.webp" data-light="img/app-chat-light.webp" src="img/app-chat-dark.webp" width="432" height="936" alt="An example chat with Asha, showing encrypted messages, identity verification status and delivery receipts."></figure>
+        <span class="preview-tag"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg> A space that feels like yours</span>
+      </div>
+      <p class="preview-caption">The real app, with sample profiles and conversations.</p>
+    </div>
+  </section>
 
-<!-- The doorway. Grey static drifts in from the edges and dies at the threshold;
-     gold dust floats out of the open door along the light. -->
-<section class="hero">
-  <canvas class="fx" data-fx="door" aria-hidden="true"></canvas>
-  <div class="hero-text">
-    <p class="eyebrow">Private chat for close friends</p>
-    <h1>Leave the noise <em>outside.</em></h1>
+  <div class="trust-strip container" aria-label="At a glance">
+    <span><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg> End-to-end encrypted</span>
+    <span><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg> Tor by default</span>
+    <span><svg class="icon" aria-hidden="true"><use href="#i-phone"/></svg> Stored on your phones</span>
+    <a href="https://github.com/Tejascodex001/sanctum">Public source code <span aria-hidden="true">↗</span></a>
   </div>
-  <div class="scene" aria-hidden="true">
-    <div class="arch">
-      <div class="room">
-        <div class="chat-head">
-          <div class="avatar" data-sigil="44,rosette" data-sigil-bg></div>
-          <b>Joe</b>
-          <span>Private · online</span>
-        </div>
-        <div class="bubbles">
-          <p class="in">are we still on for saturday?</p>
-          <p class="out">yes!! I made a poll for the time</p>
-          <p class="in">voted. bringing the board games</p>
-          <p class="out">perfect. door's open</p>
-        </div>
+
+  <section id="features" class="section container" aria-labelledby="features-title">
+    <div class="section-heading reveal"><p class="eyebrow">A little room for everything</p><h2 id="features-title">Stay close.<br><em>In your own way.</em></h2><p>A conversation, a shared plan, a moment from your day. The little things have a home here.</p></div>
+    <div class="feature-grid">
+      <article class="feature-card reveal"><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg></span><h3>Say your thing.</h3><p>Messages, photos, files and voice notes. Replies, reactions and threads keep a good conversation going.</p><span class="card-foot">One to one, or groups of up to 50</span></article>
+      <article class="feature-card reveal"><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-call"/></svg></span><h3>Hear their voice.</h3><p>Voice and video calls, with end-to-end encryption. Connect through Tor, or choose a faster route together.</p><span class="card-foot">Your connection choices stay explicit</span></article>
+      <article class="feature-card reveal"><span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-plan"/></svg></span><h3>Make something happen.</h3><p>Pick a day with a poll, make a plan, share an album or send a daily moment to your friends.</p><span class="card-foot">More doing things. More little memories.</span></article>
+    </div>
+    <div class="feature-details reveal">
+      <p><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span><b>Nearby, when you choose.</b> Chat over local Wi-Fi, a hotspot or Bluetooth without internet.</span></p>
+      <p><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span><b>A little less permanent.</b> Temporary chats live in memory; each message expires after 24 hours.</span></p>
+      <p><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span><b>A face for every friendship.</b> Personal sigils make your people and conversations easy to recognise.</span></p>
+    </div>
+  </section>
+
+  <section id="screenshots" class="section screenshots-section container" aria-labelledby="screenshots-title">
+    <div class="section-heading reveal"><p class="eyebrow">Take a closer look</p><h2 id="screenshots-title">A little look <em>inside.</em></h2><p>Real screens from Sanctum, with example conversations. Select a screenshot to open the full image.</p></div>
+    <div class="screenshot-grid" tabindex="0" role="region" aria-label="App screenshot gallery">
+      <figure class="screenshot-card">
+        <a data-screenshot-link href="img/app-home-dark.webp" target="_blank" rel="noopener" aria-label="View the full chat list screenshot"><img data-screenshot loading="lazy" data-dark="img/app-home-dark.webp" data-light="img/app-home-light.webp" src="img/app-home-dark.webp" width="432" height="936" alt="An example Sanctum chat list with sigil avatars and unread counts."></a>
+        <figcaption><h3>Find your circle.</h3><p>Personal sigils and clear unread counts keep your people easy to find.</p></figcaption>
+      </figure>
+      <figure class="screenshot-card">
+        <a data-screenshot-link href="img/app-chat-dark.webp" target="_blank" rel="noopener" aria-label="View the full conversation screenshot"><img data-screenshot loading="lazy" data-dark="img/app-chat-dark.webp" data-light="img/app-chat-light.webp" src="img/app-chat-dark.webp" width="432" height="936" alt="A sample conversation with replies and clearly labelled delivery receipts."></a>
+        <figcaption><h3>Keep the conversation going.</h3><p>Replies, shared moments and the everyday details that bring you closer.</p></figcaption>
+      </figure>
+      <figure class="screenshot-card">
+        <a data-screenshot-link href="img/app-privacy-dark.webp" target="_blank" rel="noopener" aria-label="View the full Chat privacy screenshot"><img data-screenshot loading="lazy" data-dark="img/app-privacy-dark.webp" data-light="img/app-privacy-light.webp" src="img/app-privacy-dark.webp" width="432" height="936" alt="The Chat privacy panel with separate connection, identity verification, screenshot and expiry controls."></a>
+        <figcaption><h3>Know where you stand.</h3><p>Connection, identity checks and delivery each tell you something different.</p></figcaption>
+      </figure>
+    </div>
+    <p class="gallery-hint">On a smaller screen, swipe through the gallery.</p>
+  </section>
+
+  <section id="privacy" class="privacy-section">
+    <div class="container privacy-layout">
+      <div class="section-heading reveal"><p class="eyebrow">Privacy, with the details</p><h2 id="privacy-title">Yours to share.<br><em>Yours to keep.</em></h2><p>Sanctum has no central message inbox. Your phones hold your conversations and connect to each other.</p><a class="text-link" href="https://github.com/Tejascodex001/sanctum">Look through the source <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+      <div class="privacy-points">
+        <article class="privacy-point reveal"><span>01</span><div><h3>The message stays between you.</h3><p>End-to-end encryption protects content between phones. Check your friend's identity with an in-person QR scan or by comparing the safety number.</p></div></article>
+        <article class="privacy-point reveal"><span>02</span><div><h3>Your address gets a little distance.</h3><p>Tor is the default online route. Nearby and Faster calls are optional and explain what they share. Strong observers can still correlate traffic; no network makes a compromised phone safe.</p></div></article>
+        <article class="privacy-point reveal"><span>03</span><div><h3>Your phone holds the keys.</h3><p>Messages are stored encrypted on your phone. There are no cloud backups, ads or analytics. Keep your phone secure: losing it also means losing its chats.</p></div></article>
       </div>
     </div>
-  </div>
-  <div class="hero-side">
-    <p>Sanctum is a private room for you and the people you trust. Your phones talk straight to each other, hidden by Tor. No servers, no accounts, no one listening at the door.</p>
-    <a class="button" id="download" href="https://github.com/Tejascodex001/sanctum/releases/latest/download/sanctum.apk">Download for Android</a>
-    <p class="small">Free · beta · Android 7 and later · <a href="#install">How to install</a></p>
-    <p class="small">Download doesn't start? <a href="https://github.com/Tejascodex001/sanctum/releases/latest">Get it from the release page</a> (tap sanctum.apk).</p>
-  </div>
-  <div class="ground" aria-hidden="true"><div class="light"></div></div>
-  <p class="motto">No servers · No accounts · Nothing tracked</p>
-</section>
+  </section>
 
-<section id="inside" class="section">
-  <div class="section-head">
-    <h2>A few rooms, <em>all yours.</em></h2>
-    <p>Everything happens on your phones. Nothing is kept anywhere else, so there's nothing to leak.</p>
-  </div>
-  <div class="windows">
-    <article class="window">
-      <div class="pane lit"><canvas class="fx" data-fx="bubbles" aria-hidden="true"></canvas><div data-sigil="9,constellation" data-sigil-ink></div></div>
-      <h3>Talk</h3>
-      <p>Chats and groups of up to 50, with replies, threads, reactions, photos, files and voice notes.</p>
-    </article>
-    <article class="window">
-      <div class="pane"><canvas class="fx" data-fx="rings" aria-hidden="true"></canvas><div data-sigil="23,orbits"></div></div>
-      <h3>Call</h3>
-      <p>Voice and video calls with a friend, privately, even from the lock screen.</p>
-    </article>
-    <article class="window">
-      <div class="pane"><canvas class="fx" data-fx="gather" aria-hidden="true"></canvas><div data-sigil="61,lattice"></div></div>
-      <h3>Gather</h3>
-      <p>Polls, "which day works?", plans that show who's coming, shared albums and a daily moment.</p>
-    </article>
-    <article class="window">
-      <div class="pane"><canvas class="fx" data-fx="embers" aria-hidden="true"></canvas><div data-sigil="88,glyph"></div></div>
-      <h3>Disappear</h3>
-      <p>Temp chats that burn after a day, hidden chats, a decoy PIN and a two-second panic wipe.</p>
-    </article>
-  </div>
-  <p class="hint" aria-hidden="true">Run a finger over the windows, or tap them.</p>
-  <ul class="more">
-    <li><b>No signal?</b> Chat with friends on the same Wi-Fi, a phone's hotspot or Bluetooth.</li>
-    <li><b>Daily moments.</b> One photo a day for your friends, gone after 24 hours.</li>
-    <li><b>Find anything.</b> Search every chat, and catch up on what you missed.</li>
-    <li><b>Change your mind.</b> Edit a message for 15 minutes, or delete it for everyone.</li>
-  </ul>
-</section>
+  <section id="install" class="section container" aria-labelledby="install-title">
+    <div class="section-heading reveal"><p class="eyebrow">Your circle starts here</p><h2 id="install-title">Three steps.<br><em>Then, just you.</em></h2><p>Sanctum is a free Android beta. Install the signed app, then invite someone you trust.</p></div>
+    <ol class="install-grid">
+      <li class="reveal"><span class="step-number">01</span><h3>Get Sanctum.</h3><p>Download the latest APK from our <a href="https://github.com/Tejascodex001/sanctum/releases/latest">GitHub release page</a>. No store account needed.</p></li>
+      <li class="reveal"><span class="step-number">02</span><h3>Make yourself at home.</h3><p>Open the file and follow Android's installation prompt. Later, check and install updates in Settings → Updates.</p></li>
+      <li class="reveal"><span class="step-number">03</span><h3>Let a friend in.</h3><p>Scan their QR code or enter their friend code. Verify their identity together, and start a conversation.</p></li>
+    </ol>
+  </section>
 
-<section id="private" class="section private">
-  <div class="section-head">
-    <h2>How it's <em>private.</em></h2>
-    <p>Most chat apps run through a company's computers. Sanctum has none.</p>
-  </div>
-
-  <!-- A message's trip: your phone, three random stops, Joe's phone. -->
-  <figure class="route">
-    <canvas class="fx" data-fx="route" aria-hidden="true"></canvas>
-    <div class="route-ends">
-      <span>Your phone</span>
-      <span>Joe's phone</span>
+  <section id="questions" class="section faq-section container" aria-labelledby="faq-title">
+    <div class="section-heading reveal"><p class="eyebrow">A few things to know</p><h2 id="faq-title">Good questions.<br><em>Straight answers.</em></h2></div>
+    <div class="faq-list">
+      <details><summary>Is Sanctum free?</summary><p>Yes. Sanctum is a free beta with no ads or subscription. Its source is public on GitHub. It is still being improved, so use it with an understanding of the privacy trade-offs.</p></details>
+      <details><summary>Why download an APK?</summary><p>Sanctum is distributed directly through GitHub Releases. Android asks you to allow installation from the app opening the file. Updates must be signed with the same signing key as your installed app.</p></details>
+      <details><summary>What happens when a friend is offline?</summary><p>New messages wait on the sender's phone until the phones can connect. In groups, members who already received a message can help pass it on.</p></details>
+      <details><summary>Does it work without internet?</summary><p>Nearby is an optional way to connect over local Wi-Fi, a phone's hotspot or Bluetooth. Both people need to be within range. Bluetooth support requires Android 10 or later.</p></details>
+      <details><summary>Does it work on iPhone?</summary><p>Sanctum is currently available for Android. There is no iPhone version to download.</p></details>
+      <details><summary>Do disappearing messages erase every copy?</summary><p>Expiry removes messages from Sanctum. A recipient can still save or capture content outside the app. Erasing another phone's copy also depends on reaching it.</p></details>
+      <details><summary>How do I know it is really my friend?</summary><p>Scan their QR code in person, or compare the safety number together through a trusted channel. A matching sigil is a useful visual check; it does not guarantee a phone or network is uncompromised.</p></details>
+      <details><summary>What if I lose my phone?</summary><p>There are no cloud backups. Your friends retain their copies, but your phone's conversations are lost. Install Sanctum on a new phone and add your friends again.</p></details>
     </div>
-    <figcaption>Every message takes the long way round, through three random stops. Each stop sees only the next step, so nobody along the way knows both who sent it and who got it.</figcaption>
-  </figure>
+  </section>
 
-  <div class="points">
-    <div>
-      <h3>No company in the middle</h3>
-      <p>When you write to a friend, your phone hands the message straight to theirs. There's nowhere else for it to be stored, read or sold.</p>
+  <section class="closing container reveal" aria-labelledby="closing-title">
+    <img src="img/icon.svg" width="56" height="56" alt="">
+    <p class="eyebrow">A project by RTensorLabs</p>
+    <h2 id="closing-title">A space for <em>your people.</em></h2>
+    <p>Bring a friend. Start a conversation. Make it yours.</p>
+    <div class="button-pair">
+      <a class="button" href="https://github.com/Tejascodex001/sanctum/releases/latest/download/sanctum.apk"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg> Download for Android</a>
+      <a class="button button-secondary" href="https://github.com/Tejascodex001/sanctum">Explore the source <span aria-hidden="true">↗</span></a>
     </div>
-    <div>
-      <h3>Nobody sees who you talk to</h3>
-      <p>Everything travels through Tor, so nobody watching can tell who is talking to whom, and not even your friends learn where you are.</p>
-    </div>
-    <div>
-      <h3>No number, no account</h3>
-      <p>You add a friend by scanning their code in person, or with a short code they send you. That's it.</p>
-    </div>
-    <div>
-      <h3>Locked on your phone</h3>
-      <p>Chats are stored encrypted, behind your fingerprint, face or PIN. No cloud copies, no backups.</p>
-    </div>
-  </div>
-
-  <div class="sigils">
-    <div class="equation" aria-hidden="true">
-      <canvas class="fx" data-fx="merge" aria-hidden="true"></canvas>
-      <figure><div data-sigil="31,rosette"></div><figcaption>You</figcaption></figure>
-      <span class="op">+</span>
-      <figure><div data-sigil="58,constellation"></div><figcaption>Joe</figcaption></figure>
-      <span class="op">=</span>
-      <figure class="result"><div data-sigil="77,shards"></div><figcaption>Your chat</figcaption></figure>
-    </div>
-    <div>
-      <h3>Check a chat at a glance</h3>
-      <p>Everyone gets a sigil, artwork made from their secret key. Your chat with Joe has its own sigil, made from both of you, and it looks the same on both phones. Hold them side by side: if the sigils match, nobody is listening in.</p>
-      <button class="replay" type="button" id="replay">Watch them meet again</button>
-    </div>
-  </div>
-
-  <div class="honest">
-    <h3>Honest about the trade-offs</h3>
-    <ul>
-      <li><b>Android only.</b> iPhones don't let apps stay connected in the background without a company's server.</li>
-      <li><b>Private takes a moment.</b> Tor makes video calls choppier. The Faster calls switch speeds them up and says plainly what it shares.</li>
-      <li><b>No backups.</b> If you lose your phone, its chats are gone too.</li>
-    </ul>
-  </div>
-</section>
-
-<section id="install" class="section">
-  <div class="section-head">
-    <h2>Come <em>in.</em></h2>
-    <p>Sanctum isn't on the Play Store, because it stays away from Google. Install it from here; after that it updates itself.</p>
-  </div>
-  <ol class="steps">
-    <li><b>Download</b> Tap <a href="https://github.com/Tejascodex001/sanctum/releases/latest/download/sanctum.apk">Download for Android</a> on your phone.</li>
-    <li><b>Install</b> Open the file. Android asks once to allow installs from your browser: allow it, then tap Install.</li>
-    <li><b>Add a friend</b> Scan each other's code, and your room is ready.</li>
-  </ol>
-</section>
-
-<section id="questions" class="section">
-  <div class="section-head">
-    <h2>Questions</h2>
-  </div>
-  <div class="faq">
-    <details>
-      <summary>Is it really free?</summary>
-      <p>Yes. No ads, no subscription, and no data to sell. The code is public, so anyone can check what it does.</p>
-    </details>
-    <details>
-      <summary>Is it safe to install from outside the Play Store?</summary>
-      <p>Each version is built from the public code and signed with Sanctum's own key. Android only installs updates signed with that same key, so a tampered copy can't replace yours.</p>
-    </details>
-    <details>
-      <summary>Does it work on iPhone?</summary>
-      <p>Not yet. iPhones stop apps from staying connected in the background, and the usual way around that needs a company's server, which Sanctum doesn't have.</p>
-    </details>
-    <details>
-      <summary>What if my friend is offline?</summary>
-      <p>Your phone keeps the message and delivers it when you're both online. In groups, other members pass it on, so it reaches people even after the sender has gone offline.</p>
-    </details>
-    <details>
-      <summary>Can anyone read my messages?</summary>
-      <p>No. They're locked on your phone before they leave it, and only your friends' phones can open them. Sanctum's developer can't read them either.</p>
-    </details>
-    <details>
-      <summary>How many people can I chat with?</summary>
-      <p>Sanctum is made for close friends: a circle of up to about 200 people, and groups of up to 50.</p>
-    </details>
-    <details>
-      <summary>What happens if I lose my phone?</summary>
-      <p>Its chats are gone, because there are no backups. Your friends keep their side. Install Sanctum on your new phone and add them again.</p>
-    </details>
-  </div>
-</section>
-
-<section class="closing">
-  <canvas class="fx" data-fx="hearth" aria-hidden="true"></canvas>
-  <h2>Your friends are <em>already inside.</em></h2>
-  <a class="button" href="https://github.com/Tejascodex001/sanctum/releases/latest/download/sanctum.apk">Download for Android</a>
-</section>
-
+  </section>
 </main>
 
-<footer class="foot">
-  <span class="brand small-brand"><img class="logo" src="img/icon.svg" width="32" height="32" alt=""> Sanctum</span>
-  <span>This page sets no cookies and counts no visitors.</span>
-  <a href="https://github.com/Tejascodex001/sanctum">Source code</a>
-</footer>
-
-<script src="sigil.js"></script>
-<script src="particles.js"></script>
+<footer class="site-footer"><div class="container footer-inner"><a class="brand footer-brand" href="#main"><img src="img/icon.svg" width="28" height="28" alt=""><span>Sanctum</span></a><p>By <a href="https://github.com/RTensorLabs">RTensorLabs</a>. No ads or analytics.</p><a href="https://github.com/Tejascodex001/sanctum/releases/latest">Releases <span aria-hidden="true">↗</span></a></div></footer>
 </body>
 </html>
