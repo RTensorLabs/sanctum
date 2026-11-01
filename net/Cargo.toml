@@ -31,4 +31,5 @@ webpki-roots = "1.0.10"
 
 [dev-dependencies]
 rand = "0.8"
+rcgen = "0.14"
 tempfile = "3"

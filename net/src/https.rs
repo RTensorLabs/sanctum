@@ -23,9 +23,9 @@ pub async fn get(connect: &Connect, url: &str, limit: usize, progress: &(dyn Fn(
     get_trusting(connect, url, limit, progress, mozilla_roots()).await
 }
 
-/// Where `url` redirects to, without following it. (E.g. a GitHub
-/// project's `releases/latest` points at the newest release, no API or
-/// rate limit involved.)
+/// Resolves `url` to its final HTTPS location without downloading the final
+/// page. A moved GitHub repository can redirect through its new owner before
+/// `releases/latest` redirects to the release tag.
 pub async fn redirect_of(connect: &Connect, url: &str) -> anyhow::Result<String> {
     redirect_trusting(connect, url, mozilla_roots()).await
 }
@@ -52,9 +52,9 @@ fn mozilla_roots() -> RootCertStore {
 }
 
 async fn redirect_trusting(connect: &Connect, url: &str, roots: RootCertStore) -> anyhow::Result<String> {
-    match fetch(connect, url, 1 << 20, &|_, _| {}, roots, false).await? {
-        Fetched::Redirect(to) => Ok(to),
-        Fetched::Body(_) => anyhow::bail!("{url} didn't redirect"),
+    match fetch(connect, url, 1 << 20, &|_, _| {}, roots, ResponseMode::Location).await? {
+        Fetched::Location(to) => Ok(to),
+        Fetched::Body(_) => anyhow::bail!("expected a response location"),
     }
 }
 
@@ -65,15 +65,21 @@ async fn get_trusting(
     progress: &(dyn Fn(u64, Option<u64>) + Sync),
     roots: RootCertStore,
 ) -> anyhow::Result<Vec<u8>> {
-    match fetch(connect, url, limit, progress, roots, true).await? {
+    match fetch(connect, url, limit, progress, roots, ResponseMode::Body).await? {
         Fetched::Body(body) => Ok(body),
-        Fetched::Redirect(_) => anyhow::bail!("too many redirects"),
+        Fetched::Location(_) => anyhow::bail!("expected a response body"),
     }
 }
 
 enum Fetched {
     Body(Vec<u8>),
-    Redirect(String),
+    Location(String),
+}
+
+#[derive(Clone, Copy)]
+enum ResponseMode {
+    Body,
+    Location,
 }
 
 async fn fetch(
@@ -82,7 +88,7 @@ async fn fetch(
     limit: usize,
     progress: &(dyn Fn(u64, Option<u64>) + Sync),
     roots: RootCertStore,
-    follow: bool,
+    mode: ResponseMode,
 ) -> anyhow::Result<Fetched> {
     crate::tor::install_crypto();
     let tls = TlsConnector::from(Arc::new(ClientConfig::builder().with_root_certificates(roots).with_no_client_auth()));
@@ -92,9 +98,8 @@ async fn fetch(
         let (host, port, path) = parse_url(&url)?;
         let tcp = connect(host.clone(), port).await?;
         let mut stream = tls.connect(ServerName::try_from(host.clone())?, tcp).await?;
-        let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Sanctum\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n"
-        );
+        let request =
+            format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Sanctum\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
         stream.write_all(request.as_bytes()).await?;
         stream.flush().await?;
 
@@ -115,14 +120,7 @@ async fn fetch(
 
         if (300..400).contains(&head.status) {
             let location = head.header("location").ok_or_else(|| anyhow::anyhow!("redirect without a location"))?;
-            url = if location.starts_with("https://") {
-                location.to_string()
-            } else {
-                format!("https://{host}{location}")
-            };
-            if !follow {
-                return Ok(Fetched::Redirect(url));
-            }
+            url = if location.starts_with("https://") { location.to_string() } else { format!("https://{host}{location}") };
             continue;
         }
         if head.status != 200 {
@@ -130,6 +128,9 @@ async fn fetch(
             body.extend_from_slice(&chunk[..n]);
             let said = String::from_utf8_lossy(&body[..body.len().min(160)]).into_owned();
             anyhow::bail!("HTTP {} from {host}: {}", head.status, said.trim());
+        }
+        if matches!(mode, ResponseMode::Location) {
+            return Ok(Fetched::Location(url));
         }
 
         let total = head.header("content-length").and_then(|v| v.parse::<u64>().ok());
@@ -145,7 +146,11 @@ async fn fetch(
             let n = stream.read(&mut chunk).await.or_else(|e| {
                 // Servers often close TLS without a close_notify after the
                 // body; with a known length that's harmless.
-                if e.kind() == std::io::ErrorKind::UnexpectedEof { Ok(0) } else { Err(e) }
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    Ok(0)
+                } else {
+                    Err(e)
+                }
             })?;
             if n == 0 {
                 break;
@@ -175,15 +180,8 @@ impl Head {
         let text = std::str::from_utf8(bytes)?;
         let mut lines = text.split("\r\n");
         let status_line = lines.next().unwrap_or_default();
-        let status = status_line
-            .split_whitespace()
-            .nth(1)
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(|| anyhow::anyhow!("bad status line: {status_line}"))?;
-        let headers = lines
-            .filter_map(|l| l.split_once(':'))
-            .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
-            .collect();
+        let status = status_line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("bad status line: {status_line}"))?;
+        let headers = lines.filter_map(|l| l.split_once(':')).map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string())).collect();
         Ok(Self { status, headers })
     }
 
@@ -230,13 +228,116 @@ fn dechunk(mut data: &[u8]) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio_rustls::rustls::{pki_types::PrivatePkcs8KeyDer, ServerConfig};
+    use tokio_rustls::TlsAcceptor;
+
+    type TestResponse = (&'static str, u16, Option<&'static str>, Option<&'static [u8]>);
+
+    struct TestServer {
+        connect: Connect,
+        roots: RootCertStore,
+        origin: String,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    async fn test_server(responses: Vec<TestResponse>) -> TestServer {
+        crate::tor::install_crypto();
+        // Disposable test-only keys: never written to disk or used by the app.
+        let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let mut roots = RootCertStore::empty();
+        roots.add(cert.der().clone()).unwrap();
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.der().clone()], PrivatePkcs8KeyDer::from(signing_key.serialize_der()).into())
+            .unwrap();
+        let acceptor = TlsAcceptor::from(Arc::new(config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let origin = format!("https://localhost:{}", addr.port());
+        let server_origin = origin.clone();
+        let task = tokio::spawn(async move {
+            for (path, status, location, body) in responses {
+                let (tcp, _) = listener.accept().await.unwrap();
+                let mut stream = acceptor.accept(tcp).await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while find(&request, b"\r\n\r\n").is_none() {
+                    let n = stream.read(&mut buffer).await.unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                assert!(String::from_utf8_lossy(&request).starts_with(&format!("GET {path} HTTP/1.1\r\n")));
+                let mut head = format!("HTTP/1.1 {status} Test\r\nConnection: close\r\n");
+                if let Some(location) = location {
+                    head.push_str(&format!("Location: {server_origin}{location}\r\n"));
+                }
+                head.push_str(&format!("Content-Length: {}\r\n\r\n", body.map_or(4_000_000, <[u8]>::len)));
+                stream.write_all(head.as_bytes()).await.unwrap();
+                if let Some(body) = body {
+                    stream.write_all(body).await.unwrap();
+                }
+                stream.flush().await.unwrap();
+                if body.is_none() {
+                    // Withhold the page body. Resolving a release must finish
+                    // after its headers instead of waiting for all its HTML.
+                    let _ = stream.read(&mut [0; 1]).await;
+                } else {
+                    let _ = stream.shutdown().await;
+                }
+            }
+        });
+        let connect: Connect = Arc::new(move |host, port| {
+            assert_eq!(host, "localhost");
+            assert_eq!(port, addr.port());
+            Box::pin(async move { Ok(Box::new(TcpStream::connect(addr).await?) as BoxConn) })
+        });
+        TestServer { connect, roots, origin, task }
+    }
+
+    #[tokio::test]
+    async fn moved_repository_resolves_latest_without_reading_the_page() {
+        let server = test_server(vec![
+            ("/old/releases/latest", 301, Some("/new/releases/latest"), Some(b"")),
+            ("/new/releases/latest", 302, Some("/new/releases/tag/build-83"), Some(b"")),
+            ("/new/releases/tag/build-83", 200, None, None),
+        ])
+        .await;
+        let latest = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            redirect_trusting(&server.connect, &format!("{}/old/releases/latest", server.origin), server.roots),
+        )
+        .await
+        .expect("release resolution must not wait for the HTML body")
+        .unwrap();
+        assert_eq!(latest, format!("{}/new/releases/tag/build-83", server.origin));
+        server.task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn moved_repository_download_follows_owner_and_asset_redirects() {
+        let server = test_server(vec![
+            ("/old/download", 301, Some("/new/download"), Some(b"")),
+            ("/new/download", 302, Some("/asset"), Some(b"")),
+            ("/asset", 200, None, Some(b"PKfixture")),
+        ])
+        .await;
+        let body = get_trusting(&server.connect, &format!("{}/old/download", server.origin), 1024, &|_, _| {}, server.roots).await.unwrap();
+        assert_eq!(body, b"PKfixture");
+        server.task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn redirect_loops_are_bounded() {
+        let server = test_server(vec![("/loop", 302, Some("/loop"), Some(b"")); MAX_REDIRECTS + 1]).await;
+        let result = redirect_trusting(&server.connect, &format!("{}/loop", server.origin), server.roots).await;
+        assert!(result.unwrap_err().to_string().contains("too many redirects"));
+        server.task.await.unwrap();
+    }
 
     #[test]
     fn urls() {
-        assert_eq!(
-            parse_url("https://api.github.com/repos/a/b/releases/latest").unwrap(),
-            ("api.github.com".into(), 443, "/repos/a/b/releases/latest".into())
-        );
+        assert_eq!(parse_url("https://api.github.com/repos/a/b/releases/latest").unwrap(), ("api.github.com".into(), 443, "/repos/a/b/releases/latest".into()));
         assert_eq!(parse_url("https://h:8443").unwrap(), ("h".into(), 8443, "/".into()));
         assert!(parse_url("http://plain.example/").is_err(), "https only");
     }
@@ -269,20 +370,15 @@ mod live {
                 let _ = roots.add(cert.unwrap());
             }
         }
-        let connect: Connect = Arc::new(|host, port| {
-            Box::pin(async move { Ok(Box::new(tokio::net::TcpStream::connect((host.as_str(), port)).await?) as BoxConn) })
-        });
-        let latest = redirect_trusting(&connect, "https://github.com/Tejascodex001/sanctum/releases/latest", roots.clone())
-            .await
-            .unwrap();
+        let connect: Connect =
+            Arc::new(|host, port| Box::pin(async move { Ok(Box::new(tokio::net::TcpStream::connect((host.as_str(), port)).await?) as BoxConn) }));
+        let latest = redirect_trusting(&connect, "https://github.com/Tejascodex001/sanctum/releases/latest", roots.clone()).await.unwrap();
         let tag = latest.rsplit('/').next().unwrap();
         assert!(tag.starts_with("build-"), "{latest}");
         let apk_url = format!("https://github.com/Tejascodex001/sanctum/releases/download/{tag}/app-release.apk");
         let apk_url = apk_url.as_str();
         let last = Mutex::new((0, None));
-        let apk = get_trusting(&connect, apk_url, 200 << 20, &|got, total| *last.lock().unwrap() = (got, total), roots)
-            .await
-            .unwrap();
+        let apk = get_trusting(&connect, apk_url, 200 << 20, &|got, total| *last.lock().unwrap() = (got, total), roots).await.unwrap();
         assert_eq!(&apk[..2], b"PK", "an APK is a zip");
         assert_eq!(*last.lock().unwrap(), (apk.len() as u64, Some(apk.len() as u64)));
     }

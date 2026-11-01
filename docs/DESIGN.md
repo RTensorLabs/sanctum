@@ -73,7 +73,7 @@ An opt-in feature in the sigil sheet (`net/src/nearby.rs`).
 - **Later:** Wi-Fi Direct (mostly covered by hotspot mode).
 
 ## Updates over the air
-- **Checking:** the newest release is found through Tor, by following `github.com/<repo>/releases/latest`, which redirects to the newest `build-N` tag. That uses no API, so shared Tor exits don't hit rate limits.
+- **Checking:** the newest release is found through Tor, by following `github.com/<repo>/releases/latest`, which redirects to the newest `build-N` tag. That uses no API, so shared Tor exits don't hit rate limits. Ownership redirects are resolved before reading the tag, without downloading the final HTML page. The legacy repository URL remains a compatibility entry point after a move; do not recreate the old repository path, because that removes GitHub's redirect. Older APKs that predate this handling may need a one-time manual upgrade after the move.
 - **Downloading:** the APK and `changelog.md` come from the release, also through Tor, on circuits kept apart from chat traffic.
 - **Installing:** Android's installer takes it from there and refuses any APK not signed with the app's own key. The first time, the user allows Sanctum to install apps.
 - **Changelog:** CI writes it from commit messages (`.github/scripts/changelog.py`), as `## Build N` sections. The app shows those newer than the installed build. Release tags point at the commit that was built.
