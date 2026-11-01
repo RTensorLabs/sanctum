@@ -12,7 +12,7 @@ change Sanctum's message or update routes.
 ## Motion
 
 `particles.js` draws the interactive constellation field. `motion.js` coordinates
-scroll choreography and the Pause effects button. Particle drawing stops offscreen
+scroll choreography without a visitor-facing animation control. Particle drawing stops offscreen
 and while the browser tab is hidden. Reduced-motion and data-saving preferences
 keep the effects still. App screenshots and the share preview are static local images.
 
@@ -35,7 +35,7 @@ publishes every website change in the meantime.
 
 Use the intended Vercel account and deploy this existing folder. If the account
 allows a Git connection to the public repository, import Sanctum
-(`RTensorLabs/sanctum` after its transfer) with these settings:
+(`RTensorLabs/sanctum`) with these settings:
 
 - Root directory: `website`
 - Framework preset: Other
@@ -99,6 +99,9 @@ References:
 - https://vercel.com/docs/cli/deploy
 - https://docs.github.com/en/repositories/creating-and-managing-repositories/transferring-a-repository
 
-During migration, download and source links may temporarily use the legacy GitHub
-address so they work before and after the transfer. Update them to the canonical
-organization URL after the destination repository has been verified.
+The transfer to `RTensorLabs/sanctum` is complete. Website download and source
+links use that canonical organization URL. The app retains its legacy repository
+entry point for installed-client compatibility; Build 83 follows the ownership
+redirect and then the release redirect. The configured feedback receiver is a
+separate Tor service on the developer's phone and is independent of repository
+ownership or website hosting.

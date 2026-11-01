@@ -10,9 +10,6 @@
 .hero-stage .device{will-change:transform}
 .hero-stage .orbit{border-color:color-mix(in srgb,var(--gold) 24%,transparent);transform:translate(-50%,-50%) rotateX(58deg) rotate(var(--orbit-angle,-26deg));width:143%}
 .hero-stage .orbit-two{width:160%;transform:translate(-50%,-50%) rotateX(54deg) rotate(calc(var(--orbit-angle,-26deg)*-1));border-style:dashed}
-.motion-toggle{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:10px 0;border:0;background:none;color:var(--muted);font-size:11px;cursor:pointer;margin-top:10px}
-.motion-toggle .icon{width:14px;height:14px}
-.motion-toggle:hover{color:var(--text)}
 [hidden]{display:none!important}
 .scroll-invitation{display:flex;align-items:center;justify-content:center;gap:14px;min-height:64px;padding-bottom:24px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);text-decoration:none}
 .scroll-line{height:24px;width:1px;position:relative;overflow:hidden;background:var(--line)}
@@ -51,7 +48,6 @@
   .hero-stage .hero{gap:24px}
   .hero-stage::before{background:radial-gradient(ellipse at 65% 60%,color-mix(in srgb,var(--gold) 10%,transparent),transparent 65%)}
   .hero-stage .orbit{width:125%}.hero-stage .orbit-two{width:135%}
-  .motion-toggle{font-size:10px;margin-top:4px}
   .scroll-invitation{padding-top:8px;padding-bottom:28px;min-height:70px;font-size:9px}
   .feature-card:hover{transform:none}.feature-card::before{display:none}
 }

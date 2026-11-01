@@ -4,8 +4,7 @@
   const root = document.documentElement;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const connection = navigator.connection;
-  const toggle = document.querySelector('.motion-toggle');
-  let userPaused = false, effects = false, frame = 0;
+  let effects = false, frame = 0;
   const hero = document.querySelector('.hero-stage');
   function paintScroll() {
     frame = 0;
@@ -21,7 +20,6 @@
       hero.style.setProperty('--front-rotate', `${5 + progress * 8}deg`);
       hero.style.setProperty('--orbit-angle', `${-26 + progress * 70}deg`);
     }
-
   }
   function queueScroll() { if (!frame) frame = requestAnimationFrame(paintScroll); }
   addEventListener('scroll', queueScroll, { passive: true });
@@ -44,17 +42,11 @@
     }, { passive: true });
   });
   function applyPolicy() {
-    effects = !userPaused && !reduced.matches && !connection?.saveData;
+    effects = !reduced.matches && !connection?.saveData;
     root.dataset.motion = effects ? 'active' : 'still';
-    toggle.setAttribute('aria-pressed', String(userPaused));
-    toggle.querySelector('span').textContent = effects ? 'Pause effects' : (userPaused ? 'Resume effects' : 'Effects reduced by your device');
-    toggle.querySelector('use').setAttribute('href', effects ? '#i-pause' : '#i-play');
-    toggle.disabled = !userPaused && (reduced.matches || !!connection?.saveData);
     document.dispatchEvent(new CustomEvent('sanctum-motion', { detail: { active: effects } }));
     queueScroll();
   }
-  toggle.hidden = false;
-  toggle.addEventListener('click', () => { userPaused = !userPaused; applyPolicy(); });
   reduced.addEventListener('change', () => { applyPolicy(); });
   connection?.addEventListener('change', () => { applyPolicy(); });
   applyPolicy();

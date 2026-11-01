@@ -30,7 +30,7 @@
   "redirects": [
     {
       "source": "/download",
-      "destination": "https://github.com/Tejascodex001/sanctum/releases/latest/download/sanctum.apk",
+      "destination": "https://github.com/RTensorLabs/sanctum/releases/latest/download/sanctum.apk",
       "permanent": false
     }
   ]
