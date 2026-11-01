@@ -20,7 +20,7 @@ Future<void> _shot(WidgetTester tester, String name) async {
   if (dir == null) return;
   await tester.runAsync(() async {
     final boundary = _shotKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-    final image = await boundary.toImage(pixelRatio: 2);
+    final image = await boundary.toImage(pixelRatio: 1);
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     File('$dir/$name.png').writeAsBytesSync(bytes!.buffer.asUint8List());
   });
@@ -308,6 +308,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Update now'), findsOneWidget);
       expect(find.text('Sanctum beta-1.0.0.80 is available'), findsOneWidget);
+      final primary = find.ancestor(of: find.text('Update now'), matching: find.byType(FilledButton));
+      final secondary = find.ancestor(of: find.text('Check for updates'), matching: find.byType(OutlinedButton));
+      final notes = find.ancestor(of: find.text('What’s new'), matching: find.byType(TextButton));
+      expect(tester.getSize(primary).width, tester.getSize(secondary).width);
+      expect(tester.getTopLeft(primary).dx, tester.getTopLeft(secondary).dx);
+      expect(tester.getSize(primary).height, greaterThanOrEqualTo(52));
+      expect(tester.getSize(secondary).height, greaterThanOrEqualTo(52));
+      expect(tester.getBottomLeft(notes).dy, lessThan(tester.getTopLeft(primary).dy));
+      expect(tester.getBottomLeft(primary).dy, lessThan(tester.getTopLeft(secondary).dy));
       await _shot(tester, scale == 1 ? 'updates-normal' : 'updates-test-200-percent');
       await tester.ensureVisible(find.text('Update now'));
       await tester.tap(find.text('Update now'));

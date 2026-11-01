@@ -297,6 +297,22 @@ class _UpdateSettingsState extends State<UpdateSettings> {
                     const SizedBox(height: Space.xs),
                     Text('Last checked at ${TimeOfDay.fromDateTime(checked).format(context)}', style: AppText.caption),
                   ],
+                  if (update != null) ...[
+                    const SizedBox(height: Space.sm),
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(double.infinity, TouchTarget.minimum + Space.xs),
+                        padding: const EdgeInsets.symmetric(horizontal: Space.sm),
+                      ),
+                      onPressed: busy ? null : () => showReleaseNotes(context, update, updater: u),
+                      child: const Row(children: [
+                        Icon(Icons.history_rounded, size: 20),
+                        SizedBox(width: Space.md),
+                        Expanded(child: Text('What’s new')),
+                        Icon(Icons.chevron_right_rounded, size: 20),
+                      ]),
+                    ),
+                  ],
                   if (busy)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: Space.md),
@@ -307,25 +323,26 @@ class _UpdateSettingsState extends State<UpdateSettings> {
                       padding: const EdgeInsets.only(top: Space.sm),
                       child: Text(u.error.value!, style: AppText.caption.copyWith(color: Palette.danger)),
                     ),
-                  const SizedBox(height: Space.md),
-                  Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
-                    if (update != null)
-                      FilledButton.icon(
-                        onPressed: busy ? null : u.install,
-                        icon: const Icon(Icons.system_update_rounded),
-                        label: const Text('Update now'),
+                  const SizedBox(height: Space.lg),
+                  if (update != null) ...[
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(double.infinity, TouchTarget.minimum + Space.xs),
                       ),
-                    OutlinedButton.icon(
-                      onPressed: busy ? null : _check,
-                      icon: const Icon(Icons.refresh_rounded),
-                      label: const Text('Check for updates'),
+                      onPressed: busy ? null : u.install,
+                      icon: const Icon(Icons.system_update_rounded),
+                      label: const Text('Update now'),
                     ),
-                    if (update != null)
-                      TextButton(
-                        onPressed: busy ? null : () => showReleaseNotes(context, update, updater: u),
-                        child: const Text('What’s new'),
-                      ),
-                  ]),
+                    const SizedBox(height: Space.md),
+                  ],
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, TouchTarget.minimum + Space.xs),
+                    ),
+                    onPressed: busy ? null : _check,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Check for updates'),
+                  ),
                 ]),
               );
             },

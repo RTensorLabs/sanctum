@@ -1911,20 +1911,26 @@ class _UpdateBanner extends StatelessWidget {
                           ),
                         ],
                       ),
-                      if (!busy)
-                        Wrap(spacing: Space.sm, children: [
-                          FilledButton(
-                            onPressed: () {
-                              HapticFeedback.selectionClick();
-                              u.install();
-                            },
-                            child: const Text('Update now'),
+                      if (!busy) ...[
+                        const SizedBox(height: Space.md),
+                        FilledButton(
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(double.infinity, TouchTarget.minimum + Space.xs),
                           ),
-                          TextButton(
-                            onPressed: () => showReleaseNotes(context, update),
-                            child: const Text('What\'s new'),
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            u.install();
+                          },
+                          child: const Text('Update now'),
+                        ),
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(double.infinity, TouchTarget.minimum + Space.xs),
                           ),
-                        ]),
+                          onPressed: () => showReleaseNotes(context, update),
+                          child: const Text('What\'s new'),
+                        ),
+                      ],
                       if (busy)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(0, Space.sm, Space.md, Space.xs),
