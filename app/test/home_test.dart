@@ -202,6 +202,7 @@ void main() {
     NetBus.instance.status.value = const NetInfo(status: NetStatus.online, progress: 100, detail: '');
     await settle(tester);
     expect(find.text('Offline'), findsNothing);
+    expect(tester.getTopRight(find.byTooltip('Settings')).dx, closeTo(1080 / 2.75 - Space.md, 0.1));
     await shot(tester, '1-chats-online');
     NetBus.instance.status.value = const NetInfo(status: NetStatus.off, progress: 0, detail: '');
     await settle(tester);
@@ -233,6 +234,7 @@ void main() {
     expect(find.text('Add your first friend'), findsOneWidget);
     expect(tester.getSize(find.byTooltip('Settings')).width, greaterThanOrEqualTo(48));
     expect(tester.getSize(find.byTooltip('Settings')).height, greaterThanOrEqualTo(48));
+    expect(tester.getTopRight(find.byTooltip('Settings')).dx, closeTo(1080 / 2.75 - Space.md, 0.1));
     await shot(tester, '6-first-friend');
     await tester.tap(find.text('Add a friend'));
     await settle(tester);

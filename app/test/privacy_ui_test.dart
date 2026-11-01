@@ -16,6 +16,7 @@ import 'package:sanctum/src/rust/api/sigil.dart';
 import 'package:sanctum/src/rust/api/store.dart';
 import 'package:sanctum/src/rust/frb_generated.dart';
 import 'package:sanctum/theme/sigil_theme.dart';
+import 'package:sanctum/theme/tokens.dart';
 import 'package:sanctum/update/updater.dart';
 import 'package:sanctum/src/rust/api/update.dart';
 import 'home_test.dart' show loadFonts, settle;
@@ -112,6 +113,7 @@ void main() {
     final target = tester.getSize(find.byTooltip('Settings'));
     expect(target.width, greaterThanOrEqualTo(48));
     expect(target.height, greaterThanOrEqualTo(48));
+    expect(tester.getTopRight(find.byTooltip('Settings')).dx, closeTo(320 - Space.md, 0.1));
     expect(tester.takeException(), isNull);
     Updater.instance.available.value = const UpdateInfo(
         build: 81,

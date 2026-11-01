@@ -742,7 +742,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     children: [
                       // Long-press: reveal hidden chats (after a biometric check).
                       // Tap: the door opens (and seven quick taps…).
-                      Flexible(
+                      Expanded(
                           flex: largeText ? 1 : 2,
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
