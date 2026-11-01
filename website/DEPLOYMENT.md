@@ -11,7 +11,9 @@ change Sanctum's message or update routes.
 
 ## Vercel
 
-Import the existing Sanctum repository (`RTensorLabs/sanctum` after its transfer) into the intended Vercel account:
+Use the intended Vercel account and deploy this existing folder. If the account
+allows a Git connection to the public repository, import Sanctum
+(`RTensorLabs/sanctum` after its transfer) with these settings:
 
 - Root directory: `website`
 - Framework preset: Other
@@ -25,6 +27,16 @@ on availability. This free hosting subdomain needs no domain purchase. A registe
 custom domain can be connected later. Do not purchase a domain or upgrade a plan as
 part of this setup. Vercel's Hobby plan is intended for personal, non-commercial
 projects; review its terms if the project's use changes.
+
+Check the selected account's Git connection limits before relying on automatic
+deployments from the organization. Vercel's limits documentation restricts Hobby
+connections to organization-owned repositories, while its Git guide explicitly
+describes the restriction for private organization repositories. Verify the public
+repository flow in the connected account; do not accept a paid upgrade or trial.
+If the Git connection is unavailable, the authenticated CLI can deploy this same
+`website/` directory without importing a separate repository (`vercel --prod` from
+this directory). Automatic publishing then needs a separately configured supported
+deployment flow; it is not provided by `vercel.json` alone.
 
 The `vercel.json` file supplies security headers and a short `/download` redirect.
 Keep analytics and Speed Insights disabled. Check deployment protection so the
@@ -60,6 +72,9 @@ the mobile menu, reduced motion, and the download/source links.
 References:
 - https://vercel.com/docs/domains/working-with-domains/add-a-domain
 - https://vercel.com/docs/plans/hobby
+- https://vercel.com/docs/limits#connecting-a-project-to-a-git-repository
+- https://vercel.com/docs/git#using-hobby-teams
+- https://vercel.com/docs/cli/deploy
 - https://docs.github.com/en/repositories/creating-and-managing-repositories/transferring-a-repository
 
 During migration, download and source links may temporarily use the legacy GitHub
