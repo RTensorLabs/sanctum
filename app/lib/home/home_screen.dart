@@ -348,13 +348,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Wipe all temp chats?'),
+        title: const Text('Erase all temporary conversations?'),
         content: const Text('They are erased here, and on your friends\' phones as soon as they can be reached.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Wipe all', style: TextStyle(color: Palette.danger)),
+            child: const Text('Erase all', style: TextStyle(color: Palette.danger)),
           ),
         ],
       ),
@@ -368,7 +368,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _actions(ChatCard card) {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Palette.card(card.sigil.look.background.color, card.sigil.look.accent.color),
+      backgroundColor: Palette.surface,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: Column(
@@ -443,7 +443,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             if (!card.temp)
               ListTile(
                 leading: const Icon(Icons.cleaning_services_rounded),
-                title: const Text('Clear chat'),
+                title: const Text('Clear conversation'),
                 onTap: () {
                   Navigator.pop(context);
                   _clear(card);
@@ -531,7 +531,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       builder: (context) => AlertDialog(
         title: Text('Remove ${card.title}?'),
         content: const Text(
-          'Your chat is deleted from both phones (theirs as soon as it\'s reached). '
+          'Removes this friendship and its conversation from both phones (theirs when reached). '
           'To talk again, you\'d add each other again.',
         ),
         actions: [
@@ -553,9 +553,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _clear(ChatCard card) async {
     final friendChat = card.friend && !card.group;
     final everyone = await _choose(
-      title: 'Clear ${card.title}?',
+      title: 'Clear conversation with ${card.title}?',
       body: friendChat
-          ? 'Every message in this chat is erased. For everyone also erases them on their phone.'
+          ? 'Clears the messages while keeping your friendship. For everyone also clears their copy when their phone is reached.'
           : 'Every message in this chat is erased from this phone.',
       mine: friendChat ? 'For me' : 'Clear',
       everyone: friendChat ? 'For everyone' : null,
@@ -703,6 +703,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  bool get _needsFriend => !_visibleChats.any((c) => c.friend);
+
   void _showMe() {
     HapticFeedback.selectionClick();
     Navigator.push(context, MaterialPageRoute<void>(builder: (_) => SettingsScreen(mySigil: widget.mySigil)))
@@ -724,18 +726,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     children: [
                       // Long-press: reveal hidden chats (after a biometric check).
                       // Tap: the door opens (and seven quick taps…).
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onLongPress: _toggleHidden,
-                        onTap: _knock,
-                        child: Row(
-                          children: [
-                            TappableDoor(key: _door, size: 22),
-                            const SizedBox(width: 6),
-                            const Text('Sanctum', style: AppText.display),
-                          ],
-                        ),
-                      ),
+                      Flexible(
+                          flex: 2,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onLongPress: _toggleHidden,
+                            onTap: _knock,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                TappableDoor(key: _door, size: 22),
+                                const SizedBox(width: 6),
+                                const Flexible(
+                                    child: Text('Sanctum',
+                                        style: AppText.display, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                              ],
+                            ),
+                          )),
                       const SizedBox(width: Space.md),
                       // Takes the free space, so the buttons stay at the right edge;
                       // the pill shrinks first on a narrow screen.
@@ -745,8 +752,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         child: _onTemp && _temp.isNotEmpty
                             ? IconButton(
                                 key: const ValueKey('wipe-all'),
-                                tooltip: 'Wipe all',
-                                visualDensity: VisualDensity.compact,
+                                tooltip: 'Erase all',
                                 onPressed: _wipeAll,
                                 icon: const Icon(Icons.local_fire_department_rounded, color: Palette.danger),
                               )
@@ -754,32 +760,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                       IconButton(
                         tooltip: 'Search',
-                        visualDensity: VisualDensity.compact,
                         onPressed: () => _searching ? _closeSearch() : setState(() => _searching = true),
                         icon: Icon(_searching ? Icons.search_off_rounded : Icons.search_rounded),
                       ),
                       const SizedBox(width: Space.xs),
-                      Tooltip(
-                        message: 'Settings',
-                        child: GestureDetector(
-                          onTap: _showMe,
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
+                      IconButton(
+                        tooltip: 'Settings',
+                        constraints:
+                            const BoxConstraints.tightFor(width: TouchTarget.minimum, height: TouchTarget.minimum),
+                        padding: EdgeInsets.zero,
+                        onPressed: _showMe,
+                        icon: SizedBox.square(
+                            dimension: 38,
+                            child: Stack(clipBehavior: Clip.none, children: [
                               Container(
-                                width: 38,
-                                height: 38,
-                                padding: const EdgeInsets.all(1.5),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: widget.mySigil.look.accent.color.withValues(alpha: 0.6)),
-                                ),
-                                child: ClipOval(child: SigilView(spec: widget.mySigil)),
-                              ),
+                                  padding: const EdgeInsets.all(1.5),
+                                  decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border:
+                                          Border.all(color: widget.mySigil.look.accent.color.withValues(alpha: 0.6))),
+                                  child: ClipOval(child: SigilView(spec: widget.mySigil))),
                               const Positioned(right: -1, bottom: -1, child: _OnlineDot()),
-                            ],
-                          ),
-                        ),
+                            ])),
                       ),
                     ],
                   ),
@@ -808,6 +810,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ? MomentsStrip(mySigil: widget.mySigil, sigil: _sigil)
                       : const SizedBox(width: double.infinity),
                 ),
+                if (_page.round() == 0 && _search.text.isEmpty && _needsFriend)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.sm),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(Space.lg),
+                      decoration: BoxDecoration(
+                          color: Palette.surface,
+                          borderRadius: BorderRadius.circular(Radii.md),
+                          border: Border.all(color: Palette.outline)),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('Your circle starts with one friend', style: AppText.heading),
+                        const SizedBox(height: Space.xs),
+                        Text(
+                            'Add someone you trust. Then compare your chat’s sigil together to check it is really them.',
+                            style: AppText.caption),
+                      ]),
+                    ),
+                  ),
                 if (_page.round() == 0 && _search.text.isEmpty) CatchUpCard(hidden: _showHidden, onOpen: _openAt),
                 const _UpdateBanner(),
                 const _ReliabilityBanner(),
@@ -903,10 +924,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _onTemp
             ? _newTemp
-            : _onFriends
+            : _onFriends || _needsFriend
                 ? _addFriend
                 : _newChat,
-        icon: Icon(_onFriends
+        icon: Icon(_onFriends || (!_onTemp && _needsFriend)
             ? Icons.person_add_alt_1_rounded
             : _onTemp
                 ? Icons.add_rounded
@@ -914,7 +935,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         label: AnimatedSwitcher(
           duration: Motion.fast,
           child: Text(
-            _onFriends
+            _onFriends || (!_onTemp && _needsFriend)
                 ? 'Add a friend'
                 : _onTemp
                     ? 'New temp chat'
@@ -968,6 +989,7 @@ class _NavBar extends StatelessWidget {
             children: [
               for (final (i, (icon, selectedIcon, label, count, badge)) in tabs.indexed)
                 Expanded(
+                  flex: MediaQuery.textScalerOf(context).scale(15) > 20 && page == i ? 2 : 1,
                   child: _NavTab(
                     icon: page == i ? selectedIcon : icon,
                     label: label,
@@ -1012,6 +1034,11 @@ class _NavTab extends StatelessWidget {
       button: true,
       selected: selected,
       label: label,
+      value: count == 0
+          ? null
+          : label == 'Friends'
+              ? '$count pending friend requests'
+              : '$count conversations with unread messages',
       excludeSemantics: true,
       child: Tooltip(
         message: label,
@@ -1025,7 +1052,13 @@ class _NavTab extends StatelessWidget {
             child: AnimatedContainer(
               duration: Motion.medium,
               curve: Motion.emphasized,
-              padding: EdgeInsets.symmetric(horizontal: selected ? Space.lg : Space.md, vertical: 9),
+              padding: EdgeInsets.symmetric(
+                  horizontal: MediaQuery.textScalerOf(context).scale(15) > 20
+                      ? Space.sm
+                      : selected
+                          ? Space.lg
+                          : Space.md,
+                  vertical: 9),
               decoration: BoxDecoration(
                 color: selected ? accent.withValues(alpha: Palette.light ? 0.16 : 0.2) : Colors.transparent,
                 borderRadius: BorderRadius.circular(Radii.xl),
@@ -1041,7 +1074,8 @@ class _NavTab extends StatelessWidget {
                     child: Icon(icon, color: fg, size: 24),
                   ),
                   // The name slides out of the open tab.
-                  AnimatedSize(
+                  Flexible(
+                      child: AnimatedSize(
                     duration: Motion.medium,
                     curve: Motion.emphasized,
                     child: selected
@@ -1050,11 +1084,12 @@ class _NavTab extends StatelessWidget {
                             child: Text(
                               label,
                               maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: AppText.bodyStrong.copyWith(color: fg, fontWeight: FontWeight.w700),
                             ),
                           )
                         : const SizedBox(height: 24),
-                  ),
+                  )),
                 ],
               ),
             ),
@@ -1253,7 +1288,8 @@ class _NetPill extends StatelessWidget {
     HapticFeedback.selectionClick();
     final failed = net.status == NetStatus.failed;
     final text = switch (net.status) {
-      NetStatus.online => 'Connected privately: your friends can reach you, and nobody can see where you are.',
+      NetStatus.online =>
+        'Connected privately. Your friends can reach you. Check each chat separately for identity verification and delivery.',
       NetStatus.connecting => 'Connecting privately (${net.progress}%). The first time can take a minute or two.',
       NetStatus.failed => 'Couldn\'t connect. Check your internet connection; tap Retry to try again.',
       NetStatus.off => 'Not connected.',

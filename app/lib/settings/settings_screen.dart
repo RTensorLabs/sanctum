@@ -199,8 +199,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _Entry(
                 icon: Icons.delete_forever_rounded,
                 color: Palette.danger,
-                title: 'Panic wipe',
-                subtitle: 'Erase everything from this phone',
+                title: 'Erase this phone',
+                subtitle: 'Erase Sanctum data from this phone',
                 danger: true,
                 onTap: () => showPanicSheet(context),
               ),

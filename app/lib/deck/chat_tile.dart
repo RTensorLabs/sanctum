@@ -22,9 +22,9 @@ class ChatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = Palette.card(card.sigil.look.background.color, card.sigil.look.accent.color);
+    final bg = Palette.surface;
     return SizedBox(
-      height: height,
+      height: height + ((MediaQuery.textScalerOf(context).scale(16) / 16) - 1).clamp(0, 2) * TouchTarget.minimum,
       child: Stack(
         children: [
           Positioned(
@@ -32,7 +32,7 @@ class ChatTile extends StatelessWidget {
             top: -36,
             width: 150,
             height: 150,
-            child: SigilView(spec: card.sigil, opacity: 0.28, background: false),
+            child: SigilView(spec: card.sigil, opacity: Palette.light ? 0.04 : 0.07, background: false),
           ),
           // Keeps text readable over the watermark.
           Positioned.fill(
@@ -192,22 +192,25 @@ class _Trailing extends StatelessWidget {
           valueListenable: Notifier.instance.unread,
           builder: (context, unread, _) {
             final n = unread[card.temp ? Notifier.tempKey(card.id) : Notifier.chatKey(card.id)] ?? 0;
-            return AnimatedScale(
-              scale: n > 0 ? 1 : 0,
-              duration: Motion.medium,
-              curve: Motion.emphasized,
-              child: Container(
-                margin: const EdgeInsets.only(top: Space.xs),
-                constraints: const BoxConstraints(minWidth: 20),
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(Radii.sm)),
-                child: Text(
-                  n > 99 ? '99+' : '$n',
-                  textAlign: TextAlign.center,
-                  style: AppText.micro.copyWith(color: Palette.onColor(accent), fontWeight: FontWeight.w700),
-                ),
-              ),
-            );
+            return Semantics(
+                label: n > 0 ? '$n unread messages' : null,
+                excludeSemantics: true,
+                child: AnimatedScale(
+                  scale: n > 0 ? 1 : 0,
+                  duration: Motion.medium,
+                  curve: Motion.emphasized,
+                  child: Container(
+                    margin: const EdgeInsets.only(top: Space.xs),
+                    constraints: const BoxConstraints(minWidth: 20),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(Radii.sm)),
+                    child: Text(
+                      n > 99 ? '99+' : '$n',
+                      textAlign: TextAlign.center,
+                      style: AppText.micro.copyWith(color: Palette.onColor(accent), fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ));
           },
         ),
         if (card.temp && card.nextBurn != null) ...[

@@ -11,6 +11,10 @@ abstract final class Space {
   static const xxl = 32.0;
 }
 
+abstract final class TouchTarget {
+  static const minimum = 48.0;
+}
+
 abstract final class Radii {
   static const sm = 12.0;
   static const md = 16.0;
@@ -32,7 +36,7 @@ abstract final class Palette {
   static Color get outlineStrong => light ? const Color(0x2E3A2810) : const Color(0x24FFFFFF);
   static Color get text => light ? const Color(0xF01E160D) : const Color(0xF0FFFFFF);
   static Color get textMuted => light ? const Color(0xA61E160D) : const Color(0x9EFFFFFF);
-  static Color get textFaint => light ? const Color(0x6E1E160D) : const Color(0x66FFFFFF);
+  static Color get textFaint => light ? const Color(0xB31E160D) : const Color(0xA6FFFFFF);
   static const danger = Color(0xFFFF5D5D);
 
   /// Sanctum's own gold (the door in the logo), a little deeper in light mode.

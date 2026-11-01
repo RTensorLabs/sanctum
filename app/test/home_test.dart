@@ -172,7 +172,24 @@ void main() {
     // Wipe from inside a chat.
     await tester.tap(find.text('gone soon'));
     await settle(tester);
-    await tester.tap(find.text('Wipe'));
+    Future<void> askErase() async {
+      await tester.tap(find.byTooltip('More'));
+      await settle(tester, 3);
+      await tester.tap(find.text('Chat privacy'));
+      await settle(tester);
+      await shot(tester, '3-temp-privacy');
+      await tester.scrollUntilVisible(find.text('Erase temporary conversation'), 200,
+          scrollable: find.byType(Scrollable).last);
+      await tester.tap(find.text('Erase temporary conversation'));
+      await settle(tester);
+    }
+
+    await askErase();
+    await tester.tap(find.text('Cancel'));
+    await settle(tester);
+    expect(find.text('gone soon'), findsOneWidget);
+    await askErase();
+    await tester.tap(find.text('Erase conversation'));
     await settle(tester, 14);
     expect(find.text('gone soon'), findsNothing);
     expect(find.text('see you at 8'), findsOneWidget);
@@ -213,9 +230,10 @@ void main() {
     await settle(tester, 14);
 
     // Add a friend: the screen shows our code and a way to read theirs.
-    await tester.tap(find.text('New chat'));
-    await settle(tester);
-    await shot(tester, '6-new-chat');
+    expect(find.text('Your circle starts with one friend'), findsOneWidget);
+    expect(tester.getSize(find.byTooltip('Settings')).width, greaterThanOrEqualTo(48));
+    expect(tester.getSize(find.byTooltip('Settings')).height, greaterThanOrEqualTo(48));
+    await shot(tester, '6-first-friend');
     await tester.tap(find.text('Add a friend'));
     await settle(tester);
     // Receiving a friend's code is available without scrolling past ours.

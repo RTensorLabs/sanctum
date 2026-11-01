@@ -146,7 +146,7 @@ class _HoldToWipeState extends State<HoldToWipe> with SingleTickerProviderStateM
               ),
               Center(
                 child: Text(
-                  _hold.value == 0 ? 'Hold to wipe everything' : 'Keep holding…',
+                  _hold.value == 0 ? 'Hold to erase this phone' : 'Keep holding…',
                   style: AppText.bodyStrong.copyWith(color: _hold.value > 0.5 ? Colors.white : Palette.danger),
                 ),
               ),
@@ -169,7 +169,7 @@ Future<void> showPanicSheet(BuildContext context) => showModalBottomSheet<void>(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Panic wipe', style: AppText.title),
+              Text('Erase Sanctum from this phone', style: AppText.title),
               SizedBox(height: Space.sm),
               Text(
                 'Erases your identity, friends, every chat and temp chat from this phone, '

@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../home/sanctum_door.dart';
-import '../sigil/sigil_painter.dart';
 import '../theme/tokens.dart';
 import 'chat_card.dart';
 import 'chat_tile.dart';
-import '../sigil/sigil_look.dart';
 
 /// Chats as a stack of overlapping cards. Scales to any number of chats:
 /// the list is lazy, sigils are painted once and cached, and pinned chats
@@ -79,7 +77,7 @@ class _ChatStackState extends State<ChatStack> {
       return LayoutBuilder(
         builder: (context, box) => ListView(
           physics: _physics,
-          children: [SizedBox(height: box.maxHeight, child: empty)],
+          children: [ConstrainedBox(constraints: BoxConstraints(minHeight: box.maxHeight), child: empty)],
         ),
       );
     }
@@ -141,7 +139,7 @@ class _StackedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Palette.card(card.sigil.look.background.color, card.sigil.look.accent.color),
+      color: Palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(Radii.lg),
         side: BorderSide(color: Palette.outline),

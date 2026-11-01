@@ -24,6 +24,7 @@ import '../src/rust/api/session.dart';
 import '../src/rust/api/store.dart';
 import '../theme/tokens.dart';
 import 'message_source.dart';
+import 'privacy_summary.dart';
 import '../sigil/sigil_look.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -726,121 +727,128 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheet) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_canReact(m))
-              Padding(
-                padding: const EdgeInsets.fromLTRB(Space.md, 0, Space.md, Space.sm),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    for (final e in quickReactions)
-                      _EmojiButton(
-                        emoji: e,
-                        selected: m.reactions.any((r) => r.mine && r.emoji == e),
-                        onTap: () {
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheet).height * 0.85),
+          child: SingleChildScrollView(
+              child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_canReact(m))
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(Space.md, 0, Space.md, Space.sm),
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceEvenly,
+                    children: [
+                      for (final e in quickReactions)
+                        _EmojiButton(
+                          emoji: e,
+                          selected: m.reactions.any((r) => r.mine && r.emoji == e),
+                          onTap: () {
+                            Navigator.pop(sheet);
+                            _react(m, e);
+                          },
+                        ),
+                      IconButton(
+                        tooltip: 'More reactions',
+                        icon: const Icon(Icons.add_reaction_outlined),
+                        onPressed: () {
                           Navigator.pop(sheet);
-                          _react(m, e);
+                          _reactOther(m);
                         },
                       ),
-                    IconButton(
-                      tooltip: 'More reactions',
-                      icon: const Icon(Icons.add_reaction_outlined),
-                      onPressed: () {
-                        Navigator.pop(sheet);
-                        _reactOther(m);
-                      },
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            if (widget.card.source.replies && m.seq != null && !m.isRecord)
-              ListTile(
-                leading: const Icon(Icons.reply_rounded),
-                title: const Text('Reply'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _startReply(m, fromSheet: true);
-                },
-              ),
-            if (!m.fromMe && m.seq != null && m.viewOnce == ViewOnceView.waiting)
-              ListTile(
-                leading: const Icon(Icons.visibility_rounded),
-                title: const Text('Open once'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _openOnce(m);
-                },
-              ),
-            if (m.canForward && m.seq != null && _stored)
-              ListTile(
-                leading: const Icon(Icons.shortcut_rounded),
-                title: const Text('Forward'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _forward(m);
-                },
-              ),
-            if (m.seq != null && !m.isRecord && _stored && widget.card.active)
-              ListTile(
-                leading: Icon(_pinnedSeq == m.seq ? Icons.push_pin_outlined : Icons.push_pin_rounded),
-                title: Text(_pinnedSeq == m.seq ? 'Unpin' : 'Pin'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _pin(_pinnedSeq == m.seq ? null : m);
-                },
-              ),
-            if (m.seq != null && m.media != null && m.media!.ready && m.viewOnce == ViewOnceView.no)
-              ListTile(
-                leading: const Icon(Icons.download_rounded),
-                title: const Text('Save to phone'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  saveMediaToPhone(context, chatId: widget.card.id, seq: m.seq!, media: m.media!);
-                },
-              ),
-            if (m.seq != null && m.canEdit && m.viewOnce == ViewOnceView.no && m.place == null)
-              ListTile(
-                leading: const Icon(Icons.edit_rounded),
-                title: Text(m.media == null ? 'Edit' : 'Edit caption'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _startEdit(m);
-                },
-              ),
-            if (!m.isRecord && m.viewOnce == ViewOnceView.no && (m.body.isNotEmpty || m.place != null))
-              ListTile(
-                leading: const Icon(Icons.copy_rounded),
-                title: const Text('Copy'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  final place = m.place;
-                  Clipboard.setData(ClipboardData(text: place == null ? m.body : placeWords(place)));
-                },
-              ),
-            if (m.seq != null) ...[
-              ListTile(
-                leading: const Icon(Icons.delete_outline_rounded, color: Palette.danger),
-                title: const Text('Delete for me', style: TextStyle(color: Palette.danger)),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _delete(m, everyone: false);
-                },
-              ),
-              // A call's record is only on this phone.
-              if (m.fromMe && widget.card.friend && !m.isRecord)
+              if (widget.card.source.replies && m.seq != null && !m.isRecord)
                 ListTile(
-                  leading: const Icon(Icons.delete_forever_rounded, color: Palette.danger),
-                  title: const Text('Delete for everyone', style: TextStyle(color: Palette.danger)),
+                  leading: const Icon(Icons.reply_rounded),
+                  title: const Text('Reply'),
                   onTap: () {
                     Navigator.pop(sheet);
-                    _delete(m, everyone: true);
+                    _startReply(m, fromSheet: true);
                   },
                 ),
+              if (!m.fromMe && m.seq != null && m.viewOnce == ViewOnceView.waiting)
+                ListTile(
+                  leading: const Icon(Icons.visibility_rounded),
+                  title: const Text('Open once'),
+                  onTap: () {
+                    Navigator.pop(sheet);
+                    _openOnce(m);
+                  },
+                ),
+              if (m.canForward && m.seq != null && _stored)
+                ListTile(
+                  leading: const Icon(Icons.shortcut_rounded),
+                  title: const Text('Forward'),
+                  onTap: () {
+                    Navigator.pop(sheet);
+                    _forward(m);
+                  },
+                ),
+              if (m.seq != null && !m.isRecord && _stored && widget.card.active)
+                ListTile(
+                  leading: Icon(_pinnedSeq == m.seq ? Icons.push_pin_outlined : Icons.push_pin_rounded),
+                  title: Text(_pinnedSeq == m.seq ? 'Unpin' : 'Pin'),
+                  onTap: () {
+                    Navigator.pop(sheet);
+                    _pin(_pinnedSeq == m.seq ? null : m);
+                  },
+                ),
+              if (m.seq != null && m.media != null && m.media!.ready && m.viewOnce == ViewOnceView.no)
+                ListTile(
+                  leading: const Icon(Icons.download_rounded),
+                  title: const Text('Save to phone'),
+                  onTap: () {
+                    Navigator.pop(sheet);
+                    saveMediaToPhone(context, chatId: widget.card.id, seq: m.seq!, media: m.media!);
+                  },
+                ),
+              if (m.seq != null && m.canEdit && m.viewOnce == ViewOnceView.no && m.place == null)
+                ListTile(
+                  leading: const Icon(Icons.edit_rounded),
+                  title: Text(m.media == null ? 'Edit' : 'Edit caption'),
+                  onTap: () {
+                    Navigator.pop(sheet);
+                    _startEdit(m);
+                  },
+                ),
+              if (!m.isRecord && m.viewOnce == ViewOnceView.no && (m.body.isNotEmpty || m.place != null))
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('Copy'),
+                  onTap: () {
+                    Navigator.pop(sheet);
+                    final place = m.place;
+                    Clipboard.setData(ClipboardData(text: place == null ? m.body : placeWords(place)));
+                  },
+                ),
+              if (m.seq != null) ...[
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded, color: Palette.danger),
+                  title: const Text('Delete for me', style: TextStyle(color: Palette.danger)),
+                  subtitle: const Text('Only this phone. Others keep their copies.'),
+                  onTap: () {
+                    Navigator.pop(sheet);
+                    _delete(m, everyone: false);
+                  },
+                ),
+                // A call's record is only on this phone.
+                if (m.fromMe && widget.card.friend && !m.isRecord)
+                  ListTile(
+                    leading: const Icon(Icons.delete_forever_rounded, color: Palette.danger),
+                    title: const Text('Delete for everyone', style: TextStyle(color: Palette.danger)),
+                    subtitle: const Text('Other phones are updated when reached. Saved copies can remain.'),
+                    onTap: () {
+                      Navigator.pop(sheet);
+                      _delete(m, everyone: true);
+                    },
+                  ),
+              ],
             ],
-          ],
+          )),
         ),
       ),
     );
@@ -856,7 +864,112 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
+  Future<void> _privacy() async {
+    final card = widget.card;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheet) => SafeArea(
+          child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheet).height * 0.85),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.xl),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+            Text('Chat privacy', style: AppText.title),
+            const SizedBox(height: Space.sm),
+            if (card.friend || card.group)
+              const PrivacyFact(
+                  icon: Icons.lock_outline_rounded,
+                  title: 'Messages are encrypted',
+                  detail:
+                      'Encryption protects your messages between phones. Connection, identity checks and delivery are separate.'),
+            ListenableBuilder(
+                listenable: Listenable.merge([NetBus.instance.online, NetBus.instance.nearby]),
+                builder: (context, _) {
+                  final online = NetBus.instance.online.value.contains(card.friendChatId);
+                  final nearby = NetBus.instance.nearby.value.contains(card.friendChatId);
+                  return PrivacyFact(
+                      icon: Icons.route_rounded,
+                      title: !card.friend
+                          ? 'Only on this phone'
+                          : card.group
+                              ? 'Group connections'
+                              : !online
+                                  ? 'Waiting for connection'
+                                  : nearby
+                                      ? 'Using nearby connection'
+                                      : 'Connected privately online',
+                      detail: !card.friend
+                          ? (card.temp
+                              ? 'Kept in memory. Each message expires after 24 hours.'
+                              : 'Your notes are not sent to anyone.')
+                          : card.group
+                              ? 'Each member may connect privately online, or nearby when enabled.'
+                              : !online
+                                  ? 'New messages wait on this phone until your friend can be reached.'
+                                  : nearby
+                                      ? 'You are connected locally. Nearby can reveal your local address and presence.'
+                                      : 'An online connection does not verify who your friend is or mean they have received every message.');
+                }),
+            if (card.friend && !card.temp && !card.group) _VerifyButton(card: card, labeled: true),
+            if (card.group)
+              const PrivacyFact(
+                  icon: Icons.people_outline_rounded,
+                  title: 'Check group members',
+                  detail:
+                      'Being in the same group does not mean you have verified every person. Check people individually.'),
+            const Divider(),
+            _ShotsButton(chatKey: _key, labeled: true),
+            if (card.friend || card.group || card.temp)
+              ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.timer_outlined),
+                  title: Text(card.temp
+                      ? 'Messages expire after 24 hours'
+                      : card.disappearSeconds == 0
+                          ? 'Disappearing messages: off'
+                          : 'Disappearing messages: ${disappearWords(seconds: card.disappearSeconds)}'),
+                  subtitle: const Text('Expiry and erasing a conversation are different actions.'),
+                  onTap: _stored && card.active && !card.temp ? () => Navigator.pop(sheet, 'disappear') : null),
+            const PrivacyFact(
+                icon: Icons.done_all_rounded,
+                title: 'Delivery states',
+                detail:
+                    'Queued on this phone means it is waiting. Sending is not a receipt. Delivered means the receiving phone acknowledged it; it does not mean it was read.'),
+            if (widget.onWipe != null)
+              ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.delete_forever_outlined, color: Palette.danger),
+                  title: const Text('Erase temporary conversation', style: TextStyle(color: Palette.danger)),
+                  subtitle: Text(card.friend ? 'Here and on your friend’s phone when reached.' : 'Only on this phone.'),
+                  onTap: () => Navigator.pop(sheet, 'wipe')),
+          ]),
+        ),
+      )),
+    );
+    if (!mounted) return;
+    setState(() {});
+    if (action == 'disappear') await _disappearSheet();
+    if (action == 'wipe') await _doWipe();
+  }
+
   Future<void> _doWipe() async {
+    final accepted = await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+              title: const Text('Erase temporary conversation?'),
+              content: Text(widget.card.friend
+                  ? 'Erases it on this phone and your friend’s phone when they can be reached. This cannot be undone.'
+                  : 'Erases this temporary conversation on this phone. This cannot be undone.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(dialog, false), child: const Text('Cancel')),
+                TextButton(
+                    onPressed: () => Navigator.pop(dialog, true),
+                    child: const Text('Erase conversation', style: TextStyle(color: Palette.danger)))
+              ],
+            ));
+    if (accepted != true || !mounted) return;
     HapticFeedback.heavyImpact();
     await _wipe.forward();
     await widget.onWipe!();
@@ -943,9 +1056,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   onCall: widget.card.friend && !widget.card.temp && !widget.card.group ? _call : null,
                   onVideoCall:
                       widget.card.friend && !widget.card.temp && !widget.card.group ? () => _call(video: true) : null,
-                  onWipe: widget.onWipe == null ? null : _doWipe,
                   onInfo: widget.onGroupInfo,
                   onMenu: _stored && widget.card.active ? _menu : null,
+                  onPrivacy: _privacy,
                 ),
                 if (_pinnedSeq != null) _pinnedBar(accent),
                 Expanded(
@@ -1043,6 +1156,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           accent: accent,
           showTime: !grouped,
           showTicks: widget.card.friend,
+          group: widget.card.group,
+          temporary: widget.card.temp,
           friendOnline: online,
           animate: index >= _initialCount,
         );
@@ -1507,20 +1622,20 @@ class _Header extends StatelessWidget {
   const _Header({
     required this.card,
     required this.onBack,
-    this.onWipe,
     this.onInfo,
     this.onCall,
     this.onVideoCall,
     this.onMenu,
+    required this.onPrivacy,
   });
 
   final ChatCard card;
   final VoidCallback onBack;
-  final VoidCallback? onWipe;
   final VoidCallback? onInfo;
 
-  /// Mute, disappearing messages, scheduled messages.
+  /// Mute and scheduled messages.
   final void Function(String)? onMenu;
+  final VoidCallback onPrivacy;
 
   /// Friends' chats: a voice call, or a video call.
   final VoidCallback? onCall;
@@ -1568,6 +1683,8 @@ class _Header extends StatelessWidget {
                       ],
                     ],
                   ),
+                  if (card.friend && !card.temp && !card.group)
+                    Text(card.verified ? 'Identity verified' : 'Identity not verified', style: AppText.micro),
                   const SizedBox(height: 2),
                   ValueListenableBuilder<Set<int>>(
                     valueListenable: NetBus.instance.online,
@@ -1617,35 +1734,20 @@ class _Header extends StatelessWidget {
             ),
           if (onCall != null)
             IconButton(tooltip: 'Call', icon: const Icon(Icons.call_rounded, size: 20), onPressed: onCall),
-          _ShotsButton(chatKey: card.temp ? Notifier.tempKey(card.id) : Notifier.chatKey(card.id)),
-          // Verifying is about a person, not a group: the sheet is for friends' chats.
-          if (card.friend && !card.temp && !card.group) _VerifyButton(card: card),
-          if (onWipe != null)
-            TextButton.icon(
-              onPressed: onWipe,
-              icon: const Icon(Icons.local_fire_department_rounded, color: Palette.danger, size: 18),
-              label: const Text('Wipe', style: TextStyle(color: Palette.danger)),
-            ),
-          if (onMenu != null)
-            PopupMenuButton<String>(
-              tooltip: 'More',
-              icon: const Icon(Icons.more_vert_rounded, size: 20),
-              onSelected: onMenu,
-              itemBuilder: (_) => [
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert_rounded, size: 20),
+            onSelected: (choice) => choice == 'privacy' ? onPrivacy() : onMenu?.call(choice),
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'privacy', child: Text('Chat privacy')),
+              if (onMenu != null)
                 PopupMenuItem(
                   value: 'mute',
                   child: Text(card.muted ? 'Notifications: off' : 'Mute notifications'),
                 ),
-                if (card.friend || card.group)
-                  PopupMenuItem(
-                    value: 'disappear',
-                    child: Text(card.disappearSeconds > 0
-                        ? 'Disappearing: ${disappearWords(seconds: card.disappearSeconds)}'
-                        : 'Disappearing messages'),
-                  ),
-                const PopupMenuItem(value: 'scheduled', child: Text('Scheduled messages')),
-              ],
-            ),
+              if (onMenu != null) const PopupMenuItem(value: 'scheduled', child: Text('Scheduled messages')),
+            ],
+          ),
         ],
       ),
     );
@@ -1655,9 +1757,10 @@ class _Header extends StatelessWidget {
 /// Verification status, like Threema's levels: green once their key is
 /// confirmed (QR scanned in person, or safety number compared on a call).
 class _VerifyButton extends StatefulWidget {
-  const _VerifyButton({required this.card});
+  const _VerifyButton({required this.card, this.labeled = false});
 
   final ChatCard card;
+  final bool labeled;
 
   @override
   State<_VerifyButton> createState() => _VerifyButtonState();
@@ -1675,12 +1778,13 @@ class _VerifyButtonState extends State<_VerifyButton> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheet) => SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
+              child: Padding(
             padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.xl),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                SizedBox.square(dimension: 110, child: ClipOval(child: SigilView(spec: card.sigil))),
+                SizedBox.square(dimension: 110, child: ClipOval(child: SigilView(spec: card.sigil, exact: true))),
                 const SizedBox(height: Space.lg),
                 Text(card.verified ? '${card.title} is verified' : 'Verify ${card.title}', style: AppText.title),
                 const SizedBox(height: Space.sm),
@@ -1721,7 +1825,7 @@ class _VerifyButtonState extends State<_VerifyButton> {
                 ),
               ],
             ),
-          ),
+          )),
         ),
       ),
     );
@@ -1730,6 +1834,14 @@ class _VerifyButtonState extends State<_VerifyButton> {
   @override
   Widget build(BuildContext context) {
     final verified = widget.card.verified;
+    if (widget.labeled) {
+      return ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(verified ? Icons.verified_user_rounded : Icons.shield_outlined),
+          title: Text(verified ? 'Identity verified' : 'Identity not verified'),
+          subtitle: const Text('Compare the safety number or scan their code in person.'),
+          onTap: _open);
+    }
     return IconButton(
       tooltip: verified ? 'Verified' : 'Not verified',
       onPressed: _open,
@@ -1773,6 +1885,8 @@ class _Bubble extends StatefulWidget {
     required this.showTime,
     required this.showTicks,
     this.friendOnline = true,
+    this.group = false,
+    this.temporary = false,
     required this.animate,
     this.highlight = false,
     this.onQuoteTap,
@@ -1799,6 +1913,8 @@ class _Bubble extends StatefulWidget {
 
   /// Not delivered and they're offline: it waits on this phone.
   final bool friendOnline;
+  final bool group;
+  final bool temporary;
   final bool animate;
 
   /// Briefly lit up: a quote pointing at it was tapped.
@@ -1940,8 +2056,10 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
             Text(m.body, style: AppText.body.copyWith(color: fg)),
           if (widget.showTime || m.edited || (mine && widget.showTicks)) ...[
             const SizedBox(height: 3),
-            Row(
-              mainAxisSize: MainAxisSize.min,
+            Wrap(
+              spacing: Space.xs,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              alignment: WrapAlignment.end,
               children: [
                 if (widget.showTime || m.edited)
                   Text(
@@ -1953,7 +2071,14 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
                     style: AppText.micro.copyWith(color: secondary),
                   ),
                 if (mine && widget.showTicks) ...[
-                  const SizedBox(width: 4),
+                  Text(
+                      deliveryLabel(
+                          delivered: m.delivered,
+                          online: widget.friendOnline,
+                          stored: m.seq != null || widget.temporary,
+                          group: widget.group,
+                          temporary: widget.temporary),
+                      style: AppText.micro.copyWith(color: secondary)),
                   AnimatedSwitcher(
                     duration: Motion.medium,
                     transitionBuilder: (child, a) => ScaleTransition(scale: a, child: child),
@@ -2354,9 +2479,10 @@ class _SwipeToReplyState extends State<_SwipeToReply> with SingleTickerProviderS
 /// Screenshots in this chat: blocked (default) or allowed after biometric
 /// confirmation.
 class _ShotsButton extends StatefulWidget {
-  const _ShotsButton({required this.chatKey});
+  const _ShotsButton({required this.chatKey, this.labeled = false});
 
   final String chatKey;
+  final bool labeled;
 
   @override
   State<_ShotsButton> createState() => _ShotsButtonState();
@@ -2389,6 +2515,14 @@ class _ShotsButtonState extends State<_ShotsButton> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.labeled) {
+      return ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(_allowed ? Icons.screenshot_rounded : Icons.no_photography_outlined),
+          title: Text(_allowed ? 'Screenshots allowed' : 'Screenshots blocked'),
+          subtitle: const Text('Change this after confirming it is you. Another camera can still capture a screen.'),
+          onTap: _toggle);
+    }
     return IconButton(
       tooltip: _allowed ? 'Screenshots allowed' : 'Screenshots blocked',
       onPressed: _toggle,
@@ -2517,6 +2651,8 @@ class _ThreadSheetState extends State<_ThreadSheet> {
                     accent: widget.accent,
                     showTime: true,
                     showTicks: widget.card.friend,
+                    group: widget.card.group,
+                    temporary: widget.card.temp,
                     friendOnline: widget.online,
                     animate: false,
                   ),
@@ -2638,21 +2774,26 @@ class _ReactionPill extends StatelessWidget {
         triggerMode: TooltipTriggerMode.longPress,
         child: GestureDetector(
           onTap: onTap,
-          child: AnimatedContainer(
-            duration: Motion.duration(context, Motion.fast),
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(
-              color: reaction.mine
-                  ? Color.alphaBlend(accent.withValues(alpha: 0.25), Palette.surfaceHigh)
-                  : Palette.surfaceHigh,
-              borderRadius: BorderRadius.circular(Radii.sm),
-              border: Border.all(color: reaction.mine ? accent : Palette.bg, width: 1.5),
-            ),
-            child: Text(
-              reaction.count > 1 ? '${reaction.emoji} ${reaction.count}' : reaction.emoji,
-              style: AppText.micro.copyWith(color: Palette.text, fontSize: 13),
-            ),
-          ),
+          behavior: HitTestBehavior.opaque,
+          child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: TouchTarget.minimum, minWidth: TouchTarget.minimum),
+              child: Center(
+                  widthFactor: 1,
+                  child: AnimatedContainer(
+                    duration: Motion.duration(context, Motion.fast),
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: reaction.mine
+                          ? Color.alphaBlend(accent.withValues(alpha: 0.25), Palette.surfaceHigh)
+                          : Palette.surfaceHigh,
+                      borderRadius: BorderRadius.circular(Radii.sm),
+                      border: Border.all(color: reaction.mine ? accent : Palette.bg, width: 1.5),
+                    ),
+                    child: Text(
+                      reaction.count > 1 ? '${reaction.emoji} ${reaction.count}' : reaction.emoji,
+                      style: AppText.micro.copyWith(color: Palette.text, fontSize: 13),
+                    ),
+                  ))),
         ),
       );
 }

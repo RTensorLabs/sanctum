@@ -12,7 +12,7 @@ Sanctum is an Android app for a small circle of people who trust each other (abo
 
 - **No servers.** Most chat apps send everything through a company's computers. Sanctum doesn't: your phone talks to your friends' phones directly.
 - **No phone number, no email, no account.** You add a friend by scanning their QR code in person, or by typing a short code they send you.
-- **Nobody sees who you talk to.** Connections go through Tor, so not even your friends learn your internet address, and nobody watching the network can tell who is talking to whom.
+- **Tor protects your network address.** Online connections use Tor by default, so friends do not receive your internet address. Tor reduces network tracking; an observer with enough visibility may still correlate traffic. Nearby and Faster calls have separate, opt-in privacy tradeoffs.
 - **Everything stays on your phone, locked.** Chats are stored encrypted, behind your fingerprint, face or PIN. There are no cloud backups.
 - **Nothing is tracked.** No ads, no analytics, no crash reports, no Google services. Notifications are made on your phone and never say what a message says.
 - **Made for friends, not for the world.** No public profiles, no strangers, no follower counts.
@@ -30,7 +30,7 @@ Sanctum is an Android app for a small circle of people who trust each other (abo
 
 ## Every chat has a sigil
 
-Each person and each chat gets its own **sigil**: a unique piece of artwork made from their secret key. Your chat with a friend has a sigil made from both of you, and it looks the same on both phones. **If your sigils match, nobody is listening in.** That's how you check a chat is secure: no codes to read, just look.
+Each person and each chat gets its own **sigil**: a unique piece of artwork made from their secret key. Your chat with a friend has a sigil made from both of you, and it looks the same on both phones. Compare it together, and use the safety number or an in-person QR scan to verify their identity. A matching sigil does not protect a compromised phone or guarantee that network activity cannot be correlated.
 
 ## Good to know
 
@@ -70,6 +70,8 @@ Each release is told apart by its build number.
 | ✅ | **Notifications** | For every message, even while Sanctum is open, except in the chat you're looking at. Posted on the phone itself, never through Google. They say who wrote, never what. On the lock screen they say only "New message" |
 | ✅ | **App lock** | Fingerprint, face or PIN, every time the app opens. If the fingerprint check gets stuck on a phone, it gives up after a moment and offers "Try again" |
 | ✅ | **Screenshot blocking** | On everywhere. Can be allowed per chat after a fingerprint check |
+| ✅ | **Chat privacy** | ⋮ → Chat privacy keeps connection, identity verification and delivery separate, with labelled screenshot and disappearing-message controls. Delivered means the receiving phone acknowledged it, not that someone read it |
+| ✅ | **Clearer erasing choices** | Message deletion, clearing a conversation, removing a friendship, erasing a temporary conversation and erasing this phone explain their different scopes. Temporary conversation erasure asks for confirmation; emergency hold-to-erase stays available |
 | ✅ | **Hidden chats** | Long-press the wordmark and authenticate to see them; their notifications show no name |
 | ✅ | **Panic wipe** | Hold 2 seconds, even from the lock screen. Destroys the keys and data, then closes the app |
 | ✅ | **Encrypted storage** | SQLite with every row sealed (XChaCha20-Poly1305), keys in Android Keystore, no backups |
@@ -99,6 +101,8 @@ Each release is told apart by its build number.
 | ✅ | **Typing** | "Asha is typing…" in friends' chats and groups. Sent only while you're both connected, never stored, and never what you type |
 | ✅ | **Settings** | Tap your sigil: your name, then tidy cards that each open their own page: appearance (light or dark, or like the phone, and an accent colour: your sigil's or your pick), moments, calls, lock, staying connected and nearby, updates, feedback and panic wipe |
 | ✅ | **The look** | One bold, rounded font throughout. A chat with new messages glows in its own colour and pulses when another arrives. Pull down on Chats or Friends and the Sanctum door opens to check for news. Chats greets you by name with the date, light mode is warm paper rather than cold white, empty screens have little drawings, and the bottom bar highlights the open tab with its name |
+| ✅ | **A clearer first step** | A fresh app puts Add a friend first and explains how to check their identity. Chat rows use quiet surfaces with distinctive sigil avatars and numbered unread badges |
+| ✅ | **More readable controls** | Larger settings and reaction touch areas, stronger secondary text, spoken unread counts, and layouts checked at double text size on a narrow phone. Bottom tabs still show the name of the selected tab |
 | ✅ | **Reduced motion** | Follows the phone's accessibility setting: decorative movement stops, while useful progress stays accurate. Shorter transitions, gentler unread effects, one vibration per tab change, and a ring only for incoming calls. Emergency wipe always needs two uninterrupted seconds, whatever the animation setting |
 | ✅ | **Search** | Type in the home search box to find any message, poll, plan or file name across your chats. Done on the phone; hidden chats only while revealed |
 | ✅ | **Catch-up** | "While you were away": who wrote, who mentioned you, plans to answer and polls waiting for you |
@@ -107,7 +111,7 @@ Each release is told apart by its build number.
 
 | | Feature | Notes |
 |---|---|---|
-| ✅ | **Voice calls** | Call a friend from their chat. Private through Tor by default (nobody learns who calls whom), faster on the same Wi-Fi, and nobody in between can listen. Rings like a phone call, works from the lock screen without saying who's calling, and leaves a record in the chat ("Voice call · 4:12", "Missed call") |
+| ✅ | **Voice calls** | Call a friend from their chat. End-to-end encrypted and routed through Tor by default; faster on the same Wi-Fi with Nearby enabled. Rings like a phone call, works from the lock screen without saying who's calling, and leaves a record in the chat ("Voice call · 4:12", "Missed call") |
 | ✅ | **Video calls** | Start a call with video or turn your camera on during a call; switch cameras, answer without video. Lower quality and choppier through Tor; sharp on the same Wi-Fi or with Faster calls. A hidden chat's video waits until you unlock |
 | ✅ | **Faster calls** | An opt-in Settings switch: calls connect straight between your phones when your networks allow it (less delay, sharper video), else stay private through Tor. Your friend's phone learns your internet address. Used only if both of you turn it on. The call screen says Private, Nearby or Direct |
 
