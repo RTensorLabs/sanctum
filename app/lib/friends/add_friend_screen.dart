@@ -39,6 +39,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   SigilSpec? _pairSigil;
   SigilSpec? _friendSigil;
   bool _busy = false;
+  bool _showMine = false;
 
   @override
   void initState() {
@@ -173,137 +174,150 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     final accent = widget.mySigil.look.accent.color;
     return ListView(
       key: const ValueKey('exchange'),
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
+      padding: const EdgeInsets.fromLTRB(Space.lg, Space.xs, Space.lg, Space.xxl),
       children: [
+        SegmentedButton<bool>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: false, icon: Icon(Icons.qr_code_scanner_rounded), label: Text('Scan theirs')),
+            ButtonSegment(value: true, icon: Icon(Icons.qr_code_rounded), label: Text('Share mine')),
+          ],
+          selected: {_showMine},
+          onSelectionChanged: (selection) {
+            FocusScope.of(context).unfocus();
+            setState(() => _showMine = selection.single);
+          },
+        ),
+        const SizedBox(height: Space.lg),
         Text(
-          'Each of you reads the other\'s code. Together: scan each other\'s QR. '
-          'Far away: share yours, and type or paste theirs.',
+          'Both of you exchange codes. Scan or paste theirs, then share yours so they can add you too.',
           style: AppText.caption,
         ),
-        const SizedBox(height: 20),
-        _Section(
-          title: 'YOUR CODE',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: _name,
-                textCapitalization: TextCapitalization.words,
-                textInputAction: TextInputAction.done,
-                // The code (and QR) carries the name, so keep it current.
-                onChanged: (v) {
-                  _nameDebounce?.cancel();
-                  _nameDebounce = Timer(const Duration(milliseconds: 300), () => _nameChanged(v));
-                },
-                onSubmitted: _nameChanged,
-                onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                decoration: InputDecoration(
-                  labelText: 'Your name',
-                  helperText: 'Shown only to friends who read your code',
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Center(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  child: _myCode == null
-                      ? const SizedBox.square(dimension: 240)
-                      : Container(
-                          key: ValueKey(_myCode),
-                          width: 240,
-                          height: 240,
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(24),
-                            boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.3), blurRadius: 32)],
-                          ),
-                          child: QrImageView.withQr(
-                            qr: qrForCode(_myCode!),
-                            backgroundColor: Colors.white,
-                            padding: EdgeInsets.zero,
-                          ),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (_myCode != null)
-                SelectableText(
-                  codeGroups(_myCode!),
-                  textAlign: TextAlign.center,
-                  style: AppText.mono.copyWith(fontSize: 16),
-                ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _myCode == null
-                          ? null
-                          : () => SharePlus.instance.share(
-                                ShareParams(text: 'Add me on Sanctum:\n\n$_myCode'),
-                              ),
-                      icon: const Icon(Icons.ios_share_rounded, size: 18),
-                      label: const Text('Share'),
-                    ),
+        const SizedBox(height: Space.lg),
+        if (_showMine)
+          _Section(
+            title: 'YOUR CODE',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: _name,
+                  textCapitalization: TextCapitalization.words,
+                  textInputAction: TextInputAction.done,
+                  // The code (and QR) carries the name, so keep it current.
+                  onChanged: (v) {
+                    _nameDebounce?.cancel();
+                    _nameDebounce = Timer(const Duration(milliseconds: 300), () => _nameChanged(v));
+                  },
+                  onSubmitted: _nameChanged,
+                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                  decoration: InputDecoration(
+                    labelText: 'Your name',
+                    helperText: 'Shown only to friends who read your code',
+                    isDense: true,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _myCode == null
-                          ? null
-                          : () {
-                              Clipboard.setData(ClipboardData(text: _myCode!));
-                              _toast('Copied');
-                            },
-                      icon: const Icon(Icons.copy_rounded, size: 18),
-                      label: const Text('Copy'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _Section(
-          title: 'THEIR CODE',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              FilledButton.icon(
-                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
-                onPressed: _busy ? null : _scan,
-                icon: const Icon(Icons.qr_code_scanner_rounded),
-                label: const Text('Scan their QR'),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: _typed,
-                minLines: 2,
-                maxLines: 4,
-                autocorrect: false,
-                enableSuggestions: false,
-                textCapitalization: TextCapitalization.characters,
-                style: AppText.mono,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  hintText: 'or type / paste their code',
-                  suffixIcon:
-                      IconButton(tooltip: 'Paste', icon: const Icon(Icons.content_paste_rounded), onPressed: _paste),
                 ),
-              ),
-              const SizedBox(height: 10),
-              FilledButton.tonal(
-                onPressed: _busy || _typed.text.trim().isEmpty ? null : () => _add(_typed.text, scanned: false),
-                child: _busy
-                    ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Add friend'),
-              ),
-            ],
+                const SizedBox(height: 18),
+                Center(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    child: _myCode == null
+                        ? const SizedBox.square(dimension: 240)
+                        : Container(
+                            key: ValueKey(_myCode),
+                            width: 240,
+                            height: 240,
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [BoxShadow(color: accent.withValues(alpha: 0.3), blurRadius: 32)],
+                            ),
+                            child: QrImageView.withQr(
+                              qr: qrForCode(_myCode!),
+                              backgroundColor: Colors.white,
+                              padding: EdgeInsets.zero,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (_myCode != null)
+                  SelectableText(
+                    codeGroups(_myCode!),
+                    textAlign: TextAlign.center,
+                    style: AppText.mono.copyWith(fontSize: 16),
+                  ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _myCode == null
+                            ? null
+                            : () => SharePlus.instance.share(
+                                  ShareParams(text: 'Add me on Sanctum:\n\n$_myCode'),
+                                ),
+                        icon: const Icon(Icons.ios_share_rounded, size: 18),
+                        label: const Text('Share'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _myCode == null
+                            ? null
+                            : () {
+                                Clipboard.setData(ClipboardData(text: _myCode!));
+                                _toast('Copied');
+                              },
+                        icon: const Icon(Icons.copy_rounded, size: 18),
+                        label: const Text('Copy'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
+        if (!_showMine)
+          _Section(
+            title: 'THEIR CODE',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
+                  onPressed: _busy ? null : _scan,
+                  icon: const Icon(Icons.qr_code_scanner_rounded),
+                  label: const Text('Scan their QR'),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _typed,
+                  minLines: 2,
+                  maxLines: 4,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  textCapitalization: TextCapitalization.characters,
+                  style: AppText.mono,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'or type / paste their code',
+                    suffixIcon:
+                        IconButton(tooltip: 'Paste', icon: const Icon(Icons.content_paste_rounded), onPressed: _paste),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                FilledButton.tonal(
+                  onPressed: _busy || _typed.text.trim().isEmpty ? null : () => _add(_typed.text, scanned: false),
+                  child: _busy
+                      ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Add friend'),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }

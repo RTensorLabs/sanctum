@@ -1497,7 +1497,7 @@ class _RotatingImageState extends State<_RotatingImage> with SingleTickerProvide
   Widget build(BuildContext context) {
     return RotationTransition(
       turns: _turn,
-      child: SigilView(spec: widget.card.sigil, opacity: 0.18, background: false),
+      child: SigilView(spec: widget.card.sigil, opacity: DecorationOpacity.chatSigil, background: false),
     );
   }
 }
@@ -1841,6 +1841,7 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
     final mine = m.fromMe;
     final accent = widget.accent;
     final fg = mine ? Palette.onColor(accent) : Palette.text;
+    final secondary = mine ? Palette.secondaryOnColor(accent) : fg.withValues(alpha: 0.6);
     const r = Radius.circular(20);
     const tail = Radius.circular(6);
     final bubble = Container(
@@ -1884,6 +1885,7 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
                   snippet: m.reply!.snippet,
                   color: mine ? fg : accent,
                   fg: fg,
+                  background: mine ? accent : Palette.surfaceHigh,
                 ),
               ),
             ),
@@ -1944,7 +1946,7 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
                       if (widget.showTime && m.expiresAt != null) _burnsIn(m.expiresAt!),
                       if (m.edited) widget.showTime ? 'edited' : 'Edited',
                     ].join(' · '),
-                    style: AppText.micro.copyWith(color: fg.withValues(alpha: 0.6)),
+                    style: AppText.micro.copyWith(color: secondary),
                   ),
                 if (mine && widget.showTicks) ...[
                   const SizedBox(width: 4),
@@ -1959,7 +1961,7 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
                               : Icons.schedule_rounded,
                       key: ValueKey((m.delivered, widget.friendOnline)),
                       size: 14,
-                      color: fg.withValues(alpha: m.delivered ? 0.9 : 0.5),
+                      color: m.delivered ? fg : secondary,
                       semanticLabel: m.delivered
                           ? 'Delivered'
                           : widget.friendOnline
@@ -2226,16 +2228,27 @@ class _ForwardSheetState extends State<_ForwardSheet> {
 
 /// The quoted message inside a reply (and above the composer).
 class _QuoteBlock extends StatelessWidget {
-  const _QuoteBlock({required this.author, required this.snippet, required this.color, required this.fg, this.label});
+  const _QuoteBlock({
+    required this.author,
+    required this.snippet,
+    required this.color,
+    required this.fg,
+    this.background,
+    this.label,
+  });
 
   final String author;
   final String snippet;
   final Color color;
   final Color fg;
+  final Color? background;
   final String? label;
 
   @override
   Widget build(BuildContext context) {
+    final surface = background;
+    final quotedSurface = surface == null ? null : Color.alphaBlend(fg.withValues(alpha: 0.08), surface);
+    final quoteColor = quotedSurface == null ? color : Palette.onColor(quotedSurface);
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
       decoration: BoxDecoration(
@@ -2249,13 +2262,15 @@ class _QuoteBlock extends StatelessWidget {
         children: [
           Text(
             label == null ? author : '$label $author',
-            style: AppText.micro.copyWith(color: color, fontWeight: FontWeight.w700),
+            style: AppText.micro.copyWith(color: quoteColor, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 1),
           Text(snippet,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: AppText.caption.copyWith(color: fg.withValues(alpha: 0.75))),
+              style: AppText.caption.copyWith(
+                color: quotedSurface == null ? fg.withValues(alpha: 0.75) : Palette.secondaryOnColor(quotedSurface),
+              )),
         ],
       ),
     );

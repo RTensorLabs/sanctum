@@ -176,6 +176,20 @@ class _MomentsStripState extends State<MomentsStrip> {
   Widget build(BuildContext context) {
     final mine = _mine;
     final others = _moments.where((m) => !m.mine).toList();
+    if (mine == null && others.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: Space.lg),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _share,
+            style: TextButton.styleFrom(foregroundColor: Palette.textMuted),
+            icon: const Icon(Icons.add_a_photo_outlined, size: Space.xl - Space.xs),
+            label: const Text('Share a moment'),
+          ),
+        ),
+      );
+    }
     return SizedBox(
       height: 92,
       child: ListView(
@@ -183,7 +197,7 @@ class _MomentsStripState extends State<MomentsStrip> {
         padding: const EdgeInsets.symmetric(horizontal: Space.lg),
         children: [
           _Bubble(
-            label: mine == null ? 'Your moment' : 'You',
+            label: mine == null ? 'Add yours' : 'You',
             sigil: widget.mySigil,
             ring: mine == null ? null : widget.mySigil.look.accent.color,
             add: mine == null,

@@ -70,9 +70,27 @@ abstract final class Palette {
   static Color card(Color background, Color accent) =>
       light ? Color.alphaBlend(accent.withValues(alpha: 0.12), const Color(0xFFFFFCF6)) : background;
 
-  /// Black or white, whichever reads better on [background].
+  /// Black or white, whichever has the higher text contrast.
   static Color onColor(Color background) =>
-      background.computeLuminance() > 0.45 ? const Color(0xFF0B0B0F) : const Color(0xFFFFFFFF);
+      background.computeLuminance() > 0.179 ? const Color(0xFF000000) : const Color(0xFFFFFFFF);
+
+  /// Quieter text on an accent, kept readable even on mid-tone colours.
+  static Color secondaryOnColor(Color background) {
+    final foreground = onColor(background);
+    final base = background.computeLuminance() + 0.05;
+    for (var alpha = 0.7; alpha < 1; alpha += 0.05) {
+      final color = Color.alphaBlend(foreground.withValues(alpha: alpha), background);
+      final luminance = color.computeLuminance() + 0.05;
+      final contrast = luminance > base ? luminance / base : base / luminance;
+      if (contrast >= 4.5) return color;
+    }
+    return foreground;
+  }
+}
+
+/// Artwork stays behind the conversation, especially on warm paper.
+abstract final class DecorationOpacity {
+  static double get chatSigil => Palette.light ? 0.04 : 0.07;
 }
 
 abstract final class AppText {

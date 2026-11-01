@@ -1072,21 +1072,8 @@ class _Greeting extends StatelessWidget {
 
   final String name;
 
-  static const _days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-  static const _months = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ];
+  static const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  static const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   @override
   Widget build(BuildContext context) {
@@ -1100,29 +1087,23 @@ class _Greeting extends StatelessWidget {
     final first = name.trim().split(RegExp(r'\s+')).first;
     return Padding(
       padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.sm),
-      child: SizedBox(
-        width: double.infinity,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${_days[now.weekday - 1]}, ${now.day} ${_months[now.month - 1]}'.toUpperCase(),
-              style: AppText.overline.copyWith(letterSpacing: 1.6),
+      child: Row(
+        children: [
+          Expanded(
+              child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: first.isEmpty ? hello : '$hello, '),
+                if (first.isNotEmpty) TextSpan(text: first, style: TextStyle(color: Palette.gold)),
+              ],
             ),
-            const SizedBox(height: 2),
-            Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(text: first.isEmpty ? hello : '$hello, '),
-                  if (first.isNotEmpty) TextSpan(text: first, style: TextStyle(color: Palette.gold)),
-                ],
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.title,
-            ),
-          ],
-        ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppText.heading,
+          )),
+          const SizedBox(width: Space.sm),
+          Text('${_days[now.weekday - 1]}, ${now.day} ${_months[now.month - 1]}', style: AppText.micro),
+        ],
       ),
     );
   }

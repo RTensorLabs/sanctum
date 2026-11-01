@@ -211,11 +211,24 @@ void main() {
     await shot(tester, '6-new-chat');
     await tester.tap(find.text('Add a friend'));
     await settle(tester);
+    // Receiving a friend's code is available without scrolling past ours.
+    expect(find.text('Scan their QR'), findsOneWidget);
+    expect(find.text('YOUR CODE'), findsNothing);
+    await shot(tester, '4-add-friend-scan');
+    await tester.enterText(find.byType(TextField).first, 'a code in progress');
+    await tester.tap(find.text('Share mine'));
+    await settle(tester);
     await tester.enterText(find.byType(TextField).first, 'Tejas');
     await settle(tester, 8);
     expect(find.text('YOUR CODE'), findsOneWidget);
-    expect(find.text('Scan their QR'), findsOneWidget);
     await shot(tester, '4-add-friend');
+    // Switching sides preserves both the name and the unfinished code.
+    await tester.tap(find.text('Scan theirs'));
+    await settle(tester);
+    expect(tester.widget<TextField>(find.byType(TextField).first).controller!.text, 'a code in progress');
+    await tester.tap(find.text('Share mine'));
+    await settle(tester);
+    expect(tester.widget<TextField>(find.byType(TextField).first).controller!.text, 'Tejas');
     await tester.tap(find.byTooltip('Back'));
     await settle(tester);
 
