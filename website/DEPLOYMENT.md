@@ -9,6 +9,38 @@ third-party font requests or private credentials. Screenshots contain sample pro
 and conversations. APKs and source code remain on GitHub; website hosting does not
 change Sanctum's message or update routes.
 
+## Motion and the product film
+
+`particles.js` draws the new interactive constellation field. `motion.js` coordinates
+scroll choreography, the Pause effects button, and the local product film. There is
+no animation library or third-party video player. Particles and video stop when
+offscreen or the browser tab is hidden. Reduced motion and data-saving preferences
+keep the film on its poster until someone explicitly plays it. The film has its own
+play/pause and fullscreen buttons, and contains no audio.
+
+The 12-second film uses the real sample-profile screenshots already in `img/`.
+It is an animated product showcase, not a recording of live conversations. Both
+WebM and H.264 versions are local, under 1 MB each, with a small WebP poster.
+The browser chooses one video format and requests it only when needed.
+
+To recreate it, start the local preview below and run
+`node website/tools/render-film.cjs` from the repository root. The authoring tool
+requires Playwright, Chromium and ffmpeg. It is not part of deployment: Vercel
+serves the committed media files without a build or install step.
+
+## Current Vercel project
+
+- Workspace: `tejas-gowda-ss-projects`
+- Project: `sanctum-rtensorlabs`
+- Project ID: `prj_7anjk2INml08YMF9TbE2C8n0VQzi`
+
+The project was created from the existing folder. The first Git connection attempt
+reported that Vercel's GitHub integration is not installed for the repository.
+Source-file deployment through the authenticated Vercel API does not need that
+connection. GitHub push-to-Vercel publishing stays pending until the integration
+is installed and the repository connection is verified. The Pages workflow still
+publishes every website change in the meantime.
+
 ## Vercel
 
 Use the intended Vercel account and deploy this existing folder. If the account
