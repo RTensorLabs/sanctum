@@ -33,6 +33,8 @@ serves the committed media files without a build or install step.
 - Workspace: `tejas-gowda-ss-projects`
 - Project: `sanctum-rtensorlabs`
 - Project ID: `prj_7anjk2INml08YMF9TbE2C8n0VQzi`
+- Production URL: https://sanctum-rtensorlabs.vercel.app/
+- Framework: Other; root: `website`; no build or install command
 
 The project was created from the existing folder. The first Git connection attempt
 reported that Vercel's GitHub integration is not installed for the repository.
