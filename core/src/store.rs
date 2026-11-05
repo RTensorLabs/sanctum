@@ -1183,7 +1183,27 @@ impl Store {
 
     /// Writes changed MLS entries and removes deleted ones, atomically.
     pub fn mls_apply(&self, upserts: &[(&[u8], &[u8])], deletes: &[&[u8]]) -> Result<()> {
+        self.mls_apply_with::<()>(upserts, deletes, None)
+    }
+
+    /// Like [`mls_apply`](Self::mls_apply), also putting `put` (as
+    /// [`kv_put`](Self::kv_put) would) in the same step: a message just
+    /// read is kept with the state that read it, so neither is saved
+    /// without the other.
+    pub fn mls_apply_with<T: Serialize>(
+        &self,
+        upserts: &[(&[u8], &[u8])],
+        deletes: &[&[u8]],
+        put: Option<(&[u8], &T)>,
+    ) -> Result<()> {
         let tx = self.db.unchecked_transaction()?;
+        if let Some((name, value)) = put {
+            let hashed = self.kv_index(name);
+            tx.execute(
+                "INSERT INTO kv (k, sealed) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET sealed = excluded.sealed",
+                params![hashed, self.seal(&kv_aad(&hashed), value)?],
+            )?;
+        }
         for (k, v) in upserts {
             let hashed = self.mls_index(k);
             tx.execute(
