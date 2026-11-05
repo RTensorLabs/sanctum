@@ -77,10 +77,15 @@ Pages workflow and announce the final Vercel URL once it exists.
 
 ## Repository transfer and installed apps
 
-Publish the repository-redirect compatibility app update before changing owners.
-Builds older than that update may need a one-time manual APK upgrade after the move.
+Current builds look for updates at `RTensorLabs/sanctum` first and try the old
+`Tejascodex001/sanctum` address only if that fails (see `REPOS` in
+`app/rust/src/api/update.rs`). Builds from before that change only know the old
+address and reach the new one through GitHub's repository redirect; builds older than
+the redirect-handling update may need a one-time manual APK upgrade after the move.
 Do not recreate `Tejascodex001/sanctum` at the old location: doing so removes GitHub's
-repository redirect, which installed clients use as a compatibility entry point.
+repository redirect, which those older installed apps still depend on. Android only
+installs updates signed with the app's own key, so a repository at the old address
+can't push a different app, but it could stop older installs from updating.
 
 The repository transfer preserves history, releases and repository secrets. Verify
 the destination is public and that the transferred APK assets remain downloadable.
