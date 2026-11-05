@@ -5,8 +5,10 @@
 //! addresses it knows for itself (global IPv6 addresses, which most mobile
 //! carriers hand out, and local-network IPv4 ones) with the port of a UDP
 //! socket opened for this call, as `routes` inside the encrypted call
-//! signaling. The phone called only lists its own if the caller listed
-//! theirs, so nobody's address goes anywhere unless both want it.
+//! signaling. The caller only says it would like to go direct; the phone
+//! called lists its own if it has the setting on too, and only then does
+//! the caller list its own. Nobody's address goes anywhere unless both
+//! want it.
 //!
 //! Once the call is answered, both phones send small probes to each
 //! other's addresses at the same time ("hole punching": each probe going
@@ -33,6 +35,11 @@ use std::time::{Duration, Instant};
 /// A route on the wire: this tag, the address's bytes, and the port.
 const ROUTE_V4: u8 = 4;
 const ROUTE_V6: u8 = 6;
+/// In an invite's routes in place of addresses: "I have Faster calls on;
+/// answer with yours if you do too". Not a route any build can read (an
+/// older phone called finds no address in it, and still answers with its
+/// own only because the caller wants that too).
+pub const WANT_DIRECT: &[u8] = &[0];
 /// At most this many routes are offered or taken.
 pub const MAX_ROUTES: usize = 8;
 /// UDP packets start with this, then the call id, the packet's number and

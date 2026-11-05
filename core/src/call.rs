@@ -25,7 +25,15 @@
 //! the sound, and always behind it in the queue. Small control packets in
 //! the same sealed stream say whose camera is on and ask for a keyframe
 //! after a loss. With "Faster calls" on both phones the same packets can go
-//! straight between the phones over UDP (see `direct`).
+//! straight between the phones over UDP (see `direct`). The caller's
+//! invite only says it would like that ([`direct::WANT_DIRECT`]); the
+//! phone called answers with its addresses if it has the setting on too,
+//! and only then does the caller send its own (in a [`Content::CallAnswer`]
+//! of its own, which older builds ignore).
+//!
+//! Whether an invite is too old to ring is judged on this phone's clock,
+//! corrected by how far the caller's clock is off (told over the link,
+//! [`Frame::Clock`]), so a phone whose clock is wrong still rings.
 //!
 //! The media side ([`MediaHub`]) is shared with the network, which hands it
 //! incoming packets without taking the session's lock, and with the phone's
@@ -39,7 +47,7 @@ use crate::video::{self, FrameInfo, Quality, RateControl, Reassembler, VideoFram
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -230,6 +238,10 @@ pub(crate) struct Call {
     since: u64,
     /// We called: the invite's outbox id, until their phone has it.
     invite: Option<MessageId>,
+    /// Our addresses for "Faster calls" (empty with it off). Sent only
+    /// once the friend has shown they have it on too: by the phone called
+    /// in its answer, by the caller after that answer.
+    own_routes: Vec<Vec<u8>>,
 }
 
 /// The call going on now, if any. Held in memory only.
@@ -317,6 +329,8 @@ impl Session {
             return Err(SessionError::InCall);
         }
         tidy_routes(&mut routes);
+        // Only "I'd like to go direct": our addresses wait for their answer.
+        let want_direct = if routes.is_empty() { Vec::new() } else { vec![direct::WANT_DIRECT.to_vec()] };
         let offer = CallOffer {
             call: rand::random(),
             key: rand::random(),
@@ -326,7 +340,7 @@ impl Session {
             audio_out: caps.record.clone(),
             video_in: caps.video_play.clone(),
             video_out: caps.video_record.clone(),
-            routes,
+            routes: want_direct,
         };
         let invite = self.queue_call(peer, Content::CallInvite(offer.clone()))?;
         // Ready to hear them from their very first packet.
@@ -346,7 +360,8 @@ impl Session {
             recv_video: String::new(),
             peer_routes: false,
         };
-        self.calls.now = Some(Call { view: view.clone(), offer, since: at, invite: Some(invite) });
+        self.calls.now =
+            Some(Call { view: view.clone(), offer, since: at, invite: Some(invite), own_routes: routes });
         self.events.push(Event::Call(view.clone()));
         Ok((peer, view))
     }
@@ -377,6 +392,7 @@ impl Session {
         if call.offer.routes.is_empty() {
             routes.clear();
         }
+        call.own_routes = routes.clone();
         let (peer, id, key) = (call.view.peer, call.view.id, call.offer.key);
         call.view.phase = Phase::Active;
         call.view.answered_at = Some(now_ms());
@@ -471,9 +487,11 @@ impl Session {
         }
         tidy_routes(&mut offer.routes);
         let now = now_ms();
-        let at = offer.sent_at.min(now);
+        // When it was made, by our clock: the caller's clock may be off.
+        let made = self.media.local_time(peer, offer.sent_at);
+        let at = made.min(now);
         // Too late to ring (they were offline, or we were): a missed call.
-        if now.saturating_sub(offer.sent_at) > RING_WINDOW_MS {
+        if now.saturating_sub(made) > RING_WINDOW_MS {
             self.calls.remember(offer.call);
             return self.log_call(chat_id, false, Outcome::Missed, at, 0, offer.video);
         }
@@ -520,7 +538,8 @@ impl Session {
             recv_video: String::new(),
             peer_routes: !offer.routes.is_empty(),
         };
-        self.calls.now = Some(Call { view: view.clone(), offer, since: now, invite: None });
+        let offer = CallOffer { sent_at: at, ..offer };
+        self.calls.now = Some(Call { view: view.clone(), offer, since: now, invite: None, own_routes: Vec::new() });
         self.events.push(Event::Call(view));
         Ok(())
     }
@@ -529,6 +548,22 @@ impl Session {
         let Some(call) = self.calls.now.as_mut() else {
             return Ok(());
         };
+        // From the caller, after our answer: their addresses, now that
+        // both of us have "Faster calls" on.
+        if !call.view.outgoing
+            && call.view.id == answer.call
+            && call.view.peer == *peer
+            && call.view.phase == Phase::Active
+            && !call.own_routes.is_empty()
+        {
+            let mut routes = answer.routes;
+            tidy_routes(&mut routes);
+            if !routes.is_empty() {
+                call.view.peer_routes = true;
+                self.media.add_routes(&routes);
+            }
+            return Ok(());
+        }
         if call.view.id != answer.call
             || call.view.peer != *peer
             || !call.view.outgoing
@@ -567,9 +602,16 @@ impl Session {
         call.view.recv_video = recv_video;
         call.view.peer_routes = !setup.routes.is_empty();
         let view = call.view.clone();
+        // They have it on and sent theirs: now ours go to them.
+        let ours = if setup.routes.is_empty() { Vec::new() } else { call.own_routes.clone() };
+        let id = call.view.id;
         self.media.configure(setup);
         self.media.set_live();
         self.events.push(Event::Call(view));
+        if !ours.is_empty() {
+            self.queue_call(*peer, Content::CallAnswer(CallAnswer { call: id, routes: ours, ..Default::default() }))?;
+            self.pokes.push(*peer);
+        }
         Ok(())
     }
 
@@ -1072,11 +1114,14 @@ struct Hub {
     stream: Option<MediaStream>,
     /// Where direct packets may go (loopback is refused, except in tests).
     filter: AddrFilter,
+    /// How far each friend's clock is ahead of ours (milliseconds), as
+    /// they last told us over a link.
+    clocks: HashMap<[u8; 32], i64>,
 }
 
 impl Default for Hub {
     fn default() -> Self {
-        Self { stream: None, filter: direct::public_only }
+        Self { stream: None, filter: direct::public_only, clocks: HashMap::new() }
     }
 }
 
@@ -1127,6 +1172,42 @@ impl MediaHub {
         s.had_video = s.camera == Camera::On || s.peer_camera == Camera::On;
         let routes = direct::routes_from(&setup.routes, filter);
         s.direct = (!routes.is_empty()).then(|| DirectPath::new(routes, now));
+    }
+
+    /// The friend's addresses arrived after the call was set up (we were
+    /// called, and answered with ours): start looking for a direct path.
+    pub(crate) fn add_routes(&self, routes: &[Vec<u8>]) {
+        let mut hub = self.0.lock().unwrap();
+        let filter = hub.filter;
+        let Some(s) = hub.stream.as_mut() else { return };
+        let routes = direct::routes_from(routes, filter);
+        if s.direct.is_none() && !routes.is_empty() {
+            s.direct = Some(DirectPath::new(routes, Instant::now()));
+        }
+    }
+
+    /// `peer` told us the time on their phone (`their_ms`, Unix
+    /// milliseconds) just now ([`Frame::Clock`]).
+    pub fn heard_clock(&self, peer: &[u8; 32], their_ms: u64) {
+        self.heard_clock_at(peer, their_ms, now_ms());
+    }
+
+    pub fn heard_clock_at(&self, peer: &[u8; 32], their_ms: u64, our_ms: u64) {
+        let ahead = (their_ms as i128 - our_ms as i128).clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+        self.0.lock().unwrap().clocks.insert(*peer, ahead);
+    }
+
+    /// How far `peer`'s clock is ahead of ours (milliseconds), if they
+    /// told us.
+    pub fn clock_ahead(&self, peer: &[u8; 32]) -> Option<i64> {
+        self.0.lock().unwrap().clocks.get(peer).copied()
+    }
+
+    /// A time on `peer`'s clock, as our clock had it (as is if they never
+    /// told us theirs).
+    pub fn local_time(&self, peer: &[u8; 32], their_ms: u64) -> u64 {
+        let ahead = self.clock_ahead(peer).unwrap_or(0);
+        (their_ms as i128 - ahead as i128).clamp(0, u64::MAX as i128) as u64
     }
 
     /// Which addresses direct packets may go to. Tests on one machine allow
@@ -2262,16 +2343,122 @@ mod tests {
             .collect()
     }
 
+    /// Every address `from` has queued for `to` so far (before it goes).
+    fn queued_addresses(from: &Phone, to: &Phone) -> Vec<SocketAddr> {
+        let mut out = Vec::new();
+        for (_, item) in from.s.store.outbox_for(&to.pk()).unwrap() {
+            let OutboxState::Plain(bytes) = item.state else { continue };
+            let routes = match Content::decode(&bytes) {
+                Some(Content::CallInvite(offer)) => offer.routes,
+                Some(Content::CallAnswer(answer)) => answer.routes,
+                _ => continue,
+            };
+            out.extend(routes.iter().filter_map(|r| crate::direct::decode_route(r)));
+        }
+        out
+    }
+
     /// Alice calls Bob offering `a` routes; Bob answers offering `b`.
-    fn direct_call(a: Vec<Vec<u8>>, b: Vec<Vec<u8>>) -> (Phone, Phone) {
+    /// Returns every address each phone sent the other.
+    fn direct_call_seen(a: Vec<Vec<u8>>, b: Vec<Vec<u8>>) -> (Phone, Phone, Vec<SocketAddr>, Vec<SocketAddr>) {
         let (mut alice, mut bob, ab, _) = friends();
+        let (mut from_alice, mut from_bob) = (Vec::new(), Vec::new());
         alice.s.call_start(ab, &both(), false, a).unwrap();
         assert!(probes(&alice, Instant::now()).is_empty(), "nothing direct before an answer");
+        from_alice.extend(queued_addresses(&alice, &bob));
         connect(&mut alice, &mut bob);
         assert!(probes(&bob, Instant::now()).is_empty(), "nor while ringing");
         bob.s.call_answer(&both(), false, b).unwrap();
+        from_bob.extend(queued_addresses(&bob, &alice));
         connect(&mut bob, &mut alice);
+        // Alice's own addresses, if Bob's answer showed he wants them.
+        from_alice.extend(queued_addresses(&alice, &bob));
+        connect(&mut alice, &mut bob);
+        (alice, bob, from_alice, from_bob)
+    }
+
+    fn direct_call(a: Vec<Vec<u8>>, b: Vec<Vec<u8>>) -> (Phone, Phone) {
+        let (alice, bob, _, _) = direct_call_seen(a, b);
         (alice, bob)
+    }
+
+    #[test]
+    fn the_callers_addresses_go_only_after_the_friend_answers_with_theirs() {
+        let (a, b) = ("192.168.1.10:4000", "[2401:4900:1c2a::17]:5000");
+        let (a_addr, b_addr): (SocketAddr, SocketAddr) = (a.parse().unwrap(), b.parse().unwrap());
+        // Both on: each gets the other's, Alice's only after Bob's answer.
+        let (mut alice, mut bob, ab, _) = friends();
+        alice.s.call_start(ab, &both(), false, vec![route(a)]).unwrap();
+        assert!(queued_addresses(&alice, &bob).is_empty(), "the invite carries no address");
+        connect(&mut alice, &mut bob);
+        assert!(bob.s.call_now().unwrap().peer_routes, "but says Alice wants to go direct");
+        bob.s.call_answer(&both(), false, vec![route(b)]).unwrap();
+        assert_eq!(queued_addresses(&bob, &alice), [b_addr]);
+        connect(&mut bob, &mut alice);
+        assert_eq!(queued_addresses(&alice, &bob), [a_addr], "now Alice's go");
+        assert_eq!(alice.s.take_pokes(), [bob.pk()], "and right away");
+        connect(&mut alice, &mut bob);
+        let t = Instant::now();
+        assert_eq!(probes(&alice, t), [b_addr]);
+        assert_eq!(probes(&bob, t), [a_addr]);
+
+        // Alice on, Bob off: Bob never gets Alice's addresses.
+        let (_, bob, from_alice, from_bob) = direct_call_seen(vec![route(a)], vec![]);
+        assert!(from_alice.is_empty() && from_bob.is_empty());
+        assert!(probes(&bob, t).is_empty());
+
+        // Alice off: nobody sends any, even with Bob on.
+        let (alice, bob, from_alice, from_bob) = direct_call_seen(vec![], vec![route(b)]);
+        assert!(from_alice.is_empty() && from_bob.is_empty());
+        assert!(probes(&alice, t).is_empty() && probes(&bob, t).is_empty());
+    }
+
+    #[test]
+    fn an_older_caller_that_sends_its_addresses_up_front_still_goes_direct() {
+        // Older builds put their addresses in the invite itself.
+        let (a, b) = ("192.168.1.10:4000", "192.168.1.11:5000");
+        let (mut alice, mut bob, ab, _) = friends();
+        alice.s.call_start(ab, &both(), false, vec![]).unwrap();
+        // Rewrite the queued invite as an older build would send it.
+        let (id, mut item) = alice.s.store.outbox_for(&bob.pk()).unwrap().remove(0);
+        let OutboxState::Plain(bytes) = &item.state else { panic!() };
+        let Some(Content::CallInvite(mut offer)) = Content::decode(bytes) else { panic!() };
+        offer.routes = vec![route(a)];
+        item.state = OutboxState::Plain(Content::CallInvite(offer).encode());
+        alice.s.store.outbox_put(&id, &item).unwrap();
+        connect(&mut alice, &mut bob);
+        bob.s.call_answer(&both(), false, vec![route(b)]).unwrap();
+        assert_eq!(probes(&bob, Instant::now()), [a.parse::<SocketAddr>().unwrap()]);
+    }
+
+    #[test]
+    fn a_caller_whose_clock_is_off_still_rings() {
+        let (mut alice, mut bob, ab, ba) = friends();
+        // Alice's clock is two minutes behind; her phone told Bob's so when
+        // their link came up.
+        let skew = 120_000;
+        bob.s.media().heard_clock_at(&alice.pk(), now_ms() - skew, now_ms());
+        alice.s.call_start_at(ab, &both(), false, vec![], now_ms() - skew).unwrap();
+        connect(&mut alice, &mut bob);
+        assert_eq!(bob.s.call_now().unwrap().phase, Phase::Ringing);
+        alice.s.call_end().unwrap();
+        connect(&mut alice, &mut bob);
+        // The missed call is shown at the time it was made, by Bob's clock.
+        let logged = bob.s.store.messages(ba, None).unwrap().into_iter().find(|m| m.call.is_some()).unwrap();
+        assert!(logged.sent_at + 5 >= now_ms() / 1000, "not two minutes ago");
+
+        // An invite genuinely held up for a minute still doesn't ring.
+        alice.s.call_start_at(ab, &both(), false, vec![], now_ms() - skew - RING_WINDOW_MS - 15_000).unwrap();
+        connect(&mut alice, &mut bob);
+        assert!(bob.s.call_now().is_none());
+        assert_eq!(logs(&bob, ba).last().unwrap().1, "Missed call");
+
+        // A clock ahead counts the same way.
+        let (mut alice, mut bob, ab, _) = friends();
+        bob.s.media().heard_clock_at(&alice.pk(), now_ms() + skew, now_ms());
+        alice.s.call_start_at(ab, &both(), false, vec![], now_ms() + skew - RING_WINDOW_MS - 15_000).unwrap();
+        connect(&mut alice, &mut bob);
+        assert!(bob.s.call_now().is_none(), "late by the caller's own clock");
     }
 
     #[test]
@@ -2291,7 +2478,7 @@ mod tests {
 
         // Bob has it off: Alice's offer goes unused.
         let (alice, bob) = direct_call(vec![route(a)], vec![]);
-        assert!(bob.s.call_now().unwrap().peer_routes, "Alice offered");
+        assert!(bob.s.call_now().unwrap().peer_routes, "Alice asked");
         assert!(probes(&alice, t).is_empty() && probes(&bob, t).is_empty());
 
         // Only the friend's own addresses elsewhere are ever sent to.

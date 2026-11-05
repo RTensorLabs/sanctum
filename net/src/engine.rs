@@ -6,7 +6,7 @@ use crate::direct::DirectSocket;
 use async_trait::async_trait;
 use sanctum_core::call::{MediaHub, Outgoing, Route, VideoSent};
 use sanctum_core::protocol::{
-    encode_frame, encode_frame_with_features, take_frame, take_frame_features, Frame, FEATURES,
+    encode_frame, encode_frame_with_features, take_frame, take_frame_features, Frame, FEATURES, FEATURE_CLOCK,
 };
 use sanctum_core::session::{Event, Session};
 use sanctum_core::video::{Backlog, FrameInfo};
@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::timeout;
@@ -115,6 +115,8 @@ struct Link {
     video: mpsc::UnboundedSender<VideoPiece>,
     /// Call packets queued on this link and not yet written.
     backlog: Arc<Backlog>,
+    /// When anything last arrived over it.
+    heard: Arc<Mutex<Instant>>,
 }
 
 
@@ -138,6 +140,10 @@ pub struct Node {
     direct: Mutex<Option<DirectSocket>>,
     /// The call's housekeeping is running.
     pumping: AtomicBool,
+    /// How often links are pinged, and how long one may stay silent
+    /// before it counts as dead ([`KEEPALIVE`], [`IDLE_TIMEOUT`]; shorter
+    /// in tests).
+    timing: Mutex<(Duration, Duration)>,
 }
 
 enum Role {
@@ -155,6 +161,7 @@ impl Node {
             upgrades: Mutex::default(),
             direct: Mutex::default(),
             pumping: AtomicBool::new(false),
+            timing: Mutex::new((KEEPALIVE, IDLE_TIMEOUT)),
             session,
             transport,
             events: broadcast::channel(256).0,
@@ -173,6 +180,12 @@ impl Node {
 
     pub fn set_online(&self, online: bool) {
         let _ = self.events.send(NetEvent::Online(online));
+    }
+
+    /// Pings links every `keepalive` and drops one that has been silent
+    /// for `idle` (for tests; phones use [`KEEPALIVE`] and [`IDLE_TIMEOUT`]).
+    pub fn set_link_timing(&self, keepalive: Duration, idle: Duration) {
+        *self.timing.lock().unwrap() = (keepalive, idle);
     }
 
     pub fn connected(&self) -> Vec<[u8; 32]> {
@@ -544,7 +557,23 @@ impl Node {
         }
     }
 
-    async fn run(self: Arc<Self>, mut conn: BoxConn, role: Role) -> anyhow::Result<()> {
+    async fn run(self: Arc<Self>, conn: BoxConn, role: Role) -> anyhow::Result<()> {
+        // Nearby, nothing on the network vouches for who answered (over Tor
+        // the onion address does), and nothing encrypts the link: first
+        // both phones prove who they are and seal everything after. Never
+        // in the clear: phones that can't are left to Tor.
+        let signer = SessionSigner(self.session.clone());
+        let (mut conn, sealed_by) = timeout(HANDSHAKE_TIMEOUT, async {
+            match role {
+                Role::Reached(true) => {
+                    let (conn, who) = crate::secure::accept(conn, &signer).await?;
+                    Ok::<_, anyhow::Error>((conn, Some(who)))
+                }
+                Role::Dialed(peer, true) => Ok((crate::secure::dial(conn, &signer, peer).await?, Some(peer))),
+                _ => Ok((conn, None)),
+            }
+        })
+        .await??;
         let mut buf = Vec::new();
         // Each side's first frame also says what its build can do; older
         // builds don't say, and ignore what they're told.
@@ -566,6 +595,8 @@ impl Node {
             }
         })
         .await??;
+        // The hello inside a sealed link must come from whoever sealed it.
+        anyhow::ensure!(sealed_by.is_none_or(|who| who == peer), "hello from someone else");
 
         if !self.session.lock().unwrap().knows(&peer)? {
             // A stranger: hear their friend request, then hang up.
@@ -588,23 +619,33 @@ impl Node {
         let (tx, mut news) = mpsc::unbounded_channel();
         let (video, mut pictures) = mpsc::unbounded_channel();
         let backlog = Arc::new(Backlog::default());
+        let heard = Arc::new(Mutex::new(Instant::now()));
         {
+            let (keepalive, _) = *self.timing.lock().unwrap();
             let mut links = self.links.lock().unwrap();
             if let Some(old) = links.get(&peer) {
                 // A nearby link beats one over Tor; between two of a kind,
-                // keep the link both phones agree on.
-                let keep_old = if old.local != local { old.local } else { old.preferred && !preferred };
+                // keep the link both phones agree on. But a link that has
+                // missed the friend's pings may be dead without anyone
+                // noticing yet: the friend dialing again says so, so the
+                // new link wins.
+                let alive = old.heard.lock().unwrap().elapsed() < keepalive + keepalive / 2;
+                let keep_old = alive && if old.local != local { old.local } else { old.preferred && !preferred };
                 if keep_old {
                     return Ok(());
                 }
                 let _ = old.tx.send(Cmd::Close);
             }
-            links.insert(peer, Link { id: link, tx, video, preferred, local, backlog: backlog.clone() });
+            links.insert(
+                peer,
+                Link { id: link, tx, video, preferred, local, backlog: backlog.clone(), heard: heard.clone() },
+            );
         }
         self.backoff.lock().unwrap().remove(&peer);
         let _ = self.events.send(NetEvent::PeerConnected(peer));
 
-        let result = self.serve(&mut conn, &mut buf, &peer, features, &mut news, &mut pictures, &backlog).await;
+        let result =
+            self.serve(&mut conn, &mut buf, &peer, features, &mut news, &mut pictures, &backlog, &heard).await;
 
         let mut links = self.links.lock().unwrap();
         if links.get(&peer).is_some_and(|l| l.id == link) {
@@ -628,6 +669,7 @@ impl Node {
         news: &mut mpsc::UnboundedReceiver<Cmd>,
         pictures: &mut mpsc::UnboundedReceiver<VideoPiece>,
         backlog: &Backlog,
+        heard: &Mutex<Instant>,
     ) -> anyhow::Result<()> {
         let first = {
             let mut session = self.session.lock().unwrap();
@@ -636,11 +678,20 @@ impl Node {
             session.on_link_up(peer)?
         };
         self.send_paced(conn, peer, first).await?;
+        if features & FEATURE_CLOCK != 0 {
+            let ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            write_frames(conn, &[Frame::Clock { ms }]).await?;
+        }
         self.emit_session_events();
         // Frames may have arrived together with the handshake.
         self.handle_buffered(conn, buf, peer).await?;
         let mut chunk = [0u8; 16 * 1024];
-        let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
+        let (keepalive, idle_timeout) = *self.timing.lock().unwrap();
+        let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + keepalive, keepalive);
+        // One timer for the whole link, put off only when something
+        // arrives: our own pings and sends must not keep a dead link alive.
+        let silence = tokio::time::sleep(idle_timeout);
+        tokio::pin!(silence);
         loop {
             // Pictures go only when nothing else waits to be sent.
             let idle = news.is_empty();
@@ -663,11 +714,15 @@ impl Node {
                     }
                     Some(Cmd::Close) | None => return Ok(()),
                 },
-                read = timeout(IDLE_TIMEOUT, conn.read(&mut chunk)) => {
-                    let n = read??;
+                // Reading is cancel-safe: nothing is lost when another
+                // branch wins.
+                read = conn.read(&mut chunk) => {
+                    let n = read?;
                     if n == 0 {
                         return Ok(());
                     }
+                    silence.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
+                    *heard.lock().unwrap() = Instant::now();
                     buf.extend_from_slice(&chunk[..n]);
                     self.handle_buffered(conn, buf, peer).await?;
                 }
@@ -677,6 +732,8 @@ impl Node {
                     written?;
                 }
                 _ = ping.tick() => write_frames(conn, &[Frame::Ping]).await?,
+                // Nothing heard for this long (missed pings): the link is dead.
+                () = &mut silence => anyhow::bail!("link silent"),
             }
         }
     }
@@ -697,6 +754,11 @@ impl Node {
                     // E.g. a keyframe request to answer.
                     self.flush_media();
                 }
+                continue;
+            }
+            // How far their clock is off: for judging call invites.
+            if let Frame::Clock { ms } = frame {
+                self.media.heard_clock(peer, ms);
                 continue;
             }
             let out = self.session.lock().unwrap().on_frame(peer, frame)?;
@@ -737,6 +799,19 @@ impl Node {
     }
 }
 
+/// Signs this phone's part of nearby handshakes.
+struct SessionSigner(Arc<Mutex<Session>>);
+
+impl crate::secure::Signer for SessionSigner {
+    fn public_key(&self) -> [u8; 32] {
+        self.0.lock().unwrap().public_key()
+    }
+
+    fn sign(&self, dialer: bool, transcript: &[u8; 32]) -> [u8; 64] {
+        self.0.lock().unwrap().sign_nearby_handshake(dialer, transcript)
+    }
+}
+
 fn encoded_len(frame: &Frame) -> usize {
     match frame {
         Frame::BlobChunk { bytes, .. } | Frame::GroupMls { bytes, .. } => bytes.len() + 64,
@@ -749,8 +824,12 @@ async fn write_frames(conn: &mut BoxConn, frames: &[Frame]) -> anyhow::Result<()
         return Ok(());
     }
     let bytes: Vec<u8> = frames.iter().flat_map(encode_frame).collect();
-    conn.write_all(&bytes).await?;
-    conn.flush().await?;
+    // A dead link can leave a write waiting forever once its buffers fill.
+    timeout(IDLE_TIMEOUT, async {
+        conn.write_all(&bytes).await?;
+        conn.flush().await
+    })
+    .await??;
     Ok(())
 }
 
@@ -1397,6 +1476,124 @@ mod tests {
         assert!(bob.events.try_recv().is_err());
     }
 
+    /// Stands between the phones: passes bytes both ways until `freeze`,
+    /// then keeps both sockets open and passes nothing (a link that died
+    /// without either phone being told, as Tor and mobile links do).
+    async fn freezable_relay(to: SocketAddr, freeze: Arc<AtomicBool>) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((inbound, _)) = listener.accept().await {
+                let Ok(outbound) = TcpStream::connect(to).await else { continue };
+                let (ri, wi) = inbound.into_split();
+                let (ro, wo) = outbound.into_split();
+                for (mut from, mut into) in [(ri, wo), (ro, wi)] {
+                    let freeze = freeze.clone();
+                    tokio::spawn(async move {
+                        let mut chunk = [0u8; 4096];
+                        while let Ok(n @ 1..) = from.read(&mut chunk).await {
+                            while freeze.load(Ordering::Relaxed) {
+                                tokio::time::sleep(Duration::from_millis(20)).await;
+                            }
+                            if into.write_all(&chunk[..n]).await.is_err() {
+                                break;
+                            }
+                        }
+                        // Frozen: hold the socket open until the test ends.
+                        std::future::pending::<()>().await;
+                        drop((from, into));
+                    });
+                }
+            }
+        });
+        addr
+    }
+
+    /// Two friends, the first with the smaller key, the first's dials to
+    /// the second going through a relay that can freeze.
+    async fn frozen_pair(book: &Arc<Mutex<HashMap<[u8; 32], SocketAddr>>>) -> (Phone, Phone, Arc<AtomicBool>) {
+        let (x, y) = (phone(book).await, phone(book).await);
+        let (small, big) = if x.pk < y.pk { (x, y) } else { (y, x) };
+        befriend(&small, &big).await;
+        let freeze = Arc::new(AtomicBool::new(false));
+        let real = book.lock().unwrap()[&big.pk];
+        let relay = freezable_relay(real, freeze.clone()).await;
+        book.lock().unwrap().insert(big.pk, relay);
+        (small, big, freeze)
+    }
+
+    #[tokio::test]
+    async fn a_link_gone_silent_is_dropped_even_while_we_keep_pinging() {
+        let book = Arc::default();
+        let (mut alice, bob, freeze) = frozen_pair(&book).await;
+        for p in [&alice, &bob] {
+            p.node.set_link_timing(Duration::from_millis(150), Duration::from_millis(700));
+        }
+        alice.node.poke(bob.pk);
+        expect(&mut alice.events, |e| *e == NetEvent::PeerConnected(bob.pk)).await;
+        // Pings keep a healthy link up well past the idle timeout.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert_eq!(alice.node.connected(), [bob.pk], "a live link stays up");
+
+        // The link dies silently; each phone still pings, but hears nothing.
+        freeze.store(true, Ordering::Relaxed);
+        let froze = Instant::now();
+        expect(&mut alice.events, |e| *e == NetEvent::PeerDisconnected(bob.pk)).await;
+        let took = froze.elapsed();
+        assert!(took >= Duration::from_millis(500), "not before the timeout: {took:?}");
+        assert!(took < Duration::from_secs(4), "dropped soon after: {took:?}");
+        let b = bob.node.clone();
+        until(move || b.connected().is_empty()).await;
+    }
+
+    #[tokio::test]
+    async fn a_friend_redialing_replaces_a_link_that_went_silent() {
+        let book = Arc::default();
+        let (mut alice, bob, freeze) = frozen_pair(&book).await;
+        // Pings often, but a long idle timeout: only the replacement rule
+        // can bring the friends back together in time.
+        for p in [&alice, &bob] {
+            p.node.set_link_timing(Duration::from_millis(150), Duration::from_secs(60));
+        }
+        // Alice (the smaller key) dials: both phones prefer this link.
+        alice.node.poke(bob.pk);
+        expect(&mut alice.events, |e| *e == NetEvent::PeerConnected(bob.pk)).await;
+        let b = bob.node.clone();
+        until(move || b.connected() == [alice.pk]).await;
+        freeze.store(true, Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        // Bob dials her again. The old link would win between two of a
+        // kind, but it has gone quiet, so the new one takes over on both.
+        bob.node.dial(alice.pk);
+        expect(&mut alice.events, |e| *e == NetEvent::PeerConnected(bob.pk)).await;
+        let ba = bob.session.lock().unwrap().chat_id_for(&alice.pk).unwrap().unwrap();
+        let ab = alice.session.lock().unwrap().chat_id_for(&bob.pk).unwrap().unwrap();
+        bob.session.lock().unwrap().send_text(ba, "still there?").unwrap();
+        bob.node.poke(alice.pk);
+        let session = alice.session.clone();
+        until(move || {
+            session.lock().unwrap().store.messages(ab, None).unwrap().iter().any(|m| m.body == "still there?")
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn linked_phones_learn_how_far_each_others_clocks_are() {
+        let book = Arc::default();
+        let (mut alice, bob) = (phone(&book).await, phone(&book).await);
+        befriend(&alice, &bob).await;
+        alice.node.poke(bob.pk);
+        expect(&mut alice.events, |e| *e == NetEvent::PeerConnected(bob.pk)).await;
+        let (a, b) = (alice.session.lock().unwrap().media(), bob.session.lock().unwrap().media());
+        let (ap, bp) = (alice.pk, bob.pk);
+        until(move || a.clock_ahead(&bp).is_some() && b.clock_ahead(&ap).is_some()).await;
+        // Same machine, same clock: no more than the trip apart.
+        let ahead = alice.session.lock().unwrap().media().clock_ahead(&bob.pk).unwrap();
+        assert!(ahead.abs() < 2_000, "{ahead}");
+        assert_eq!(alice.node.connected(), [bob.pk], "the link stays up");
+    }
+
     fn call_caps() -> sanctum_core::call::CallCaps {
         sanctum_core::call::CallCaps {
             play: vec!["opus".into()],
@@ -1631,6 +1828,37 @@ mod tests {
         }
         let events = node.subscribe();
         Phone { node, session, pk, events, _dir: dir }
+    }
+
+    #[tokio::test]
+    async fn nearby_a_phone_answering_for_another_friend_gets_no_link() {
+        let ways = TwoWays { far: Arc::default(), near: Arc::default(), nearby_on: Arc::new(AtomicBool::new(true)) };
+        let (alice, bob, eve) = (two_way_phone(&ways).await, two_way_phone(&ways).await, two_way_phone(&ways).await);
+        befriend(&alice, &bob).await;
+        befriend(&alice, &eve).await;
+        // On the local network, "Bob" is really Eve's phone (another friend
+        // of Alice's, say, or anyone who copied his beacon).
+        let eve_near = ways.near.lock().unwrap()[&eve.pk];
+        ways.near.lock().unwrap().insert(bob.pk, eve_near);
+        alice.node.dial(bob.pk);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(alice.node.connected().is_empty(), "Alice took Eve for Bob");
+        assert!(eve.node.connected().is_empty());
+    }
+
+    #[tokio::test]
+    async fn nearby_listeners_say_nothing_in_the_clear() {
+        let ways = TwoWays { far: Arc::default(), near: Arc::default(), nearby_on: Arc::default() };
+        let bob = two_way_phone(&ways).await;
+        // An older phone (or anyone) connects and waits for the usual
+        // challenge: nothing comes, and nothing it sends is taken as a hello.
+        let near = ways.near.lock().unwrap()[&bob.pk];
+        let mut conn = TcpStream::connect(near).await.unwrap();
+        let mut buf = [0u8; 64];
+        assert!(timeout(Duration::from_millis(300), conn.read(&mut buf)).await.is_err(), "said something");
+        let far = ways.far.lock().unwrap()[&bob.pk];
+        let mut conn = TcpStream::connect(far).await.unwrap();
+        assert!(timeout(Duration::from_secs(2), conn.read(&mut buf)).await.unwrap().unwrap() > 0, "over Tor as before");
     }
 
     #[tokio::test]

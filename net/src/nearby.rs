@@ -3,11 +3,20 @@
 //!
 //! Each phone broadcasts a small beacon every few seconds on the local
 //! network. It names no one: for each friend it carries an 8-byte tag
-//! that only that friend can compute (a keyed hash of the pair's
-//! fingerprint and the current minute), so strangers on the network learn
-//! nothing and can't follow a phone from one minute to the next. A friend
-//! who recognizes a tag connects to the TCP port in the beacon, and from
-//! there it's the usual link: the same signed hello, the same MLS.
+//! that only that friend can compute (a keyed hash of a secret the pair
+//! shares and the current minute), so strangers on the network learn
+//! nothing and can't follow a phone from one minute to the next. The
+//! secret is made from both friends' nearby keys, which they swap once
+//! connected; until then the tag is keyed with the pair's public keys,
+//! which only the two of them (and whoever they gave their codes to)
+//! know. A friend who recognizes a tag connects to the TCP port in the
+//! beacon; both phones prove who they are and encrypt the link (see
+//! `secure`), and inside it's the usual link: the same signed hello, the
+//! same MLS.
+//!
+//! Beacons carry a new magic (`SNC2`) since links became encrypted, so
+//! these phones and older ones (which speak in the clear) ignore each
+//! other here and meet over Tor instead.
 //!
 //! What a nearby friend does see is your local network address
 //! (192.168.x.x), never your internet address; that's why it's opt-in.
@@ -30,7 +39,8 @@ pub const DISCOVERY_PORT: u16 = 47_823;
 const BEACON_EVERY: Duration = Duration::from_secs(4);
 /// A friend not heard from for this long isn't nearby any more.
 const FRESH: Duration = Duration::from_secs(20);
-const MAGIC: [u8; 4] = *b"SNC1";
+/// v2: links are encrypted (older phones send `SNC1`).
+const MAGIC: [u8; 4] = *b"SNC2";
 /// Keeps a beacon inside one unfragmented UDP packet.
 const TAGS_PER_BEACON: usize = 150;
 const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
@@ -45,10 +55,15 @@ struct Beacon {
     tags: Vec<[u8; 8]>,
 }
 
-/// The tag `me` and `friend` both compute for this minute.
-fn tag(me: &[u8; 32], friend: &[u8; 32], minute: u64) -> [u8; 8] {
-    let key: [u8; 32] = pair_fingerprint(me, friend);
-    let mut input = b"sanctum nearby v1".to_vec();
+/// The tag `me` and `friend` both compute for this minute: keyed with the
+/// secret they share once they have swapped nearby keys (`pair`), else
+/// with their public keys.
+fn tag(me: &[u8; 32], friend: &[u8; 32], pair: Option<&[u8; 32]>, minute: u64) -> [u8; 8] {
+    let (key, label): ([u8; 32], &[u8]) = match pair {
+        Some(secret) => (*secret, b"sanctum nearby v2 secret"),
+        None => (pair_fingerprint(me, friend), b"sanctum nearby v2"),
+    };
+    let mut input = label.to_vec();
     input.extend_from_slice(&minute.to_le_bytes());
     let hash = blake3::keyed_hash(&key, &input);
     hash.as_bytes()[..8].try_into().unwrap()
@@ -183,10 +198,10 @@ impl Nearby {
     fn beacons(&self, session: &Arc<Mutex<Session>>, port: u16) -> Vec<Vec<u8>> {
         let (me, friends) = {
             let s = session.lock().unwrap();
-            (s.public_key(), s.friend_keys().unwrap_or_default())
+            (s.public_key(), s.nearby_pair_keys().unwrap_or_default())
         };
         let minute = minute();
-        let tags: Vec<[u8; 8]> = friends.iter().map(|f| tag(&me, f, minute)).collect();
+        let tags: Vec<[u8; 8]> = friends.iter().map(|(f, pair)| tag(&me, f, pair.as_ref(), minute)).collect();
         tags.chunks(TAGS_PER_BEACON)
             .map(|chunk| {
                 postcard::to_stdvec(&Beacon {
@@ -207,12 +222,19 @@ impl Nearby {
         }
         let (me, friends) = {
             let s = session.lock().unwrap();
-            (s.public_key(), s.friend_keys().unwrap_or_default())
+            (s.public_key(), s.nearby_pair_keys().unwrap_or_default())
         };
         // This minute's tags, and the last minute's (clocks differ a little).
+        // Either kind: the friend may not have our nearby key yet.
         let minute = minute();
-        for friend in friends {
-            let known = [tag(&me, &friend, minute), tag(&me, &friend, minute.saturating_sub(1))];
+        for (friend, pair) in friends {
+            let mut known = Vec::with_capacity(4);
+            for m in [minute, minute.saturating_sub(1)] {
+                known.push(tag(&me, &friend, None, m));
+                if let Some(pair) = &pair {
+                    known.push(tag(&me, &friend, Some(pair), m));
+                }
+            }
             if beacon.tags.iter().any(|t| known.contains(t)) {
                 let addr = SocketAddr::new(from, beacon.port);
                 let new = self.book.lock().unwrap().insert(friend, (addr, Instant::now())).is_none();
@@ -339,9 +361,21 @@ mod tests {
             Identity::generate().public_key(),
             Identity::generate().public_key(),
         );
-        assert_eq!(tag(&a, &b, 7), tag(&b, &a, 7), "both compute it");
-        assert_ne!(tag(&a, &b, 7), tag(&a, &c, 7), "another friend can't");
-        assert_ne!(tag(&a, &b, 7), tag(&a, &b, 8), "not linkable across minutes");
+        assert_eq!(tag(&a, &b, None, 7), tag(&b, &a, None, 7), "both compute it");
+        assert_ne!(tag(&a, &b, None, 7), tag(&a, &c, None, 7), "another friend can't");
+        assert_ne!(tag(&a, &b, None, 7), tag(&a, &b, None, 8), "not linkable across minutes");
+        let secret = [9u8; 32];
+        assert_eq!(tag(&a, &b, Some(&secret), 7), tag(&b, &a, Some(&secret), 7));
+        assert_ne!(tag(&a, &b, Some(&secret), 7), tag(&a, &b, Some(&secret), 8));
+    }
+
+    #[test]
+    fn a_shared_secret_tag_cant_be_made_from_public_keys() {
+        let (a, b) = (Identity::generate().public_key(), Identity::generate().public_key());
+        let secret = sanctum_core::nearby::pair_key(&[1; 32], &[2; 32]);
+        let beacon = tag(&a, &b, Some(&secret), 100);
+        assert_ne!(beacon, tag(&a, &b, None, 100), "not the public-key tag");
+        assert_ne!(beacon, tag(&a, &b, Some(&sanctum_core::identity::pair_fingerprint(&a, &b)), 100));
     }
 
     use crate::engine::Node;

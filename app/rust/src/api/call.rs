@@ -114,7 +114,9 @@ fn caps(play: Vec<String>, record: Vec<String>, video_play: Vec<String>, video_r
 
 /// With "Faster calls" on: opens the call's UDP socket and lists the
 /// addresses the friend may reach it on. Empty (and nothing opened) when
-/// the setting is off or the phone has no usable address.
+/// the setting is off or the phone has no usable address. Calling out,
+/// these stay on this phone until the friend answers with theirs (see
+/// `sanctum_core::call`); nothing is sent to them before that.
 fn offer_routes() -> Vec<Vec<u8>> {
     if !calls_direct().unwrap_or(false) {
         return Vec::new();
