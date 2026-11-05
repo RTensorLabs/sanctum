@@ -842,6 +842,28 @@ impl Store {
         Ok(peers)
     }
 
+    /// Removes an item, but only if it is waiting for `peer`: someone
+    /// else confirming it changes nothing.
+    pub fn outbox_remove_for(&self, id: &[u8; 16], peer: &[u8; 32]) -> Result<Option<OutboxItem>> {
+        let sealed: Option<Vec<u8>> = self
+            .db
+            .query_row(
+                "SELECT sealed FROM outbox WHERE id = ?1 AND peer = ?2",
+                params![id.as_slice(), self.peer_index(peer)],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(sealed) = sealed else {
+            return Ok(None);
+        };
+        let item: OutboxItem = self.open_sealed(&outbox_aad(id), &sealed)?;
+        if item.peer != *peer {
+            return Ok(None);
+        }
+        self.db.execute("DELETE FROM outbox WHERE id = ?1", [id.as_slice()])?;
+        Ok(Some(item))
+    }
+
     pub fn outbox_remove(&self, id: &[u8; 16]) -> Result<Option<OutboxItem>> {
         let sealed: Option<Vec<u8>> = self
             .db

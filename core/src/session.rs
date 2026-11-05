@@ -707,7 +707,7 @@ impl Session {
         let frame = match frame {
             Frame::Ping => return Ok(Vec::new()),
             Frame::Ack { id } => {
-                self.on_ack(id)?;
+                self.on_ack(peer, id)?;
                 return Ok(Vec::new());
             }
             Frame::GroupKeyPackageRequest { .. }
@@ -863,16 +863,18 @@ impl Session {
 
     /// The friend (or group member) has it. A group message counts as
     /// delivered once every member has it.
-    fn on_ack(&mut self, id: MessageId) -> Result<()> {
+    /// Only what was sent to `peer` counts: nobody can confirm, and so
+    /// stop, what is on its way to someone else.
+    fn on_ack(&mut self, peer: &[u8; 32], id: MessageId) -> Result<()> {
         self.call_delivered(&id);
-        if let Some(item) = self.store.outbox_remove(&id)? {
+        if let Some(item) = self.store.outbox_remove_for(&id, peer)? {
             if let Some((chat, seq)) = item.message {
                 if !self.store.outbox_has_message(chat, seq)? {
                     self.store.set_delivered(chat, seq)?;
                 }
                 self.events.push(Event::Chat(chat));
             }
-        } else if let Some(i) = self.temp_out.iter().position(|o| o.id == id) {
+        } else if let Some(i) = self.temp_out.iter().position(|o| o.id == id && o.peer == *peer) {
             self.temp_out.remove(i);
             if let Some(temp) = self.temp.mark_delivered(&id) {
                 self.events.push(Event::Temp(temp));
@@ -1431,6 +1433,25 @@ pub(crate) mod tests {
         assert_eq!(alice.texts(ab).len(), 11);
         assert!(alice.texts(ab).iter().all(|m| m.2), "all delivered");
         assert_eq!(bob.texts(ba).iter().filter(|m| !m.0).count(), 5);
+    }
+
+    #[test]
+    fn only_the_friend_a_message_is_for_can_confirm_it() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let mut carol = Phone::new();
+        let (ab, _) = befriend(&mut alice, &mut bob);
+        befriend(&mut alice, &mut carol);
+        connect(&mut alice, &mut bob);
+        connect(&mut alice, &mut carol);
+        alice.s.send_text(ab, "for bob").unwrap();
+        let (id, _) = alice.s.store.outbox_for(&bob.pk()).unwrap().remove(0);
+        // Carol (who somehow learned its id) confirms Bob's message.
+        assert!(alice.s.on_frame(&carol.pk(), Frame::Ack { id }).unwrap().is_empty());
+        assert_eq!(alice.s.store.outbox_for(&bob.pk()).unwrap().len(), 1, "still on its way to Bob");
+        assert_eq!(alice.texts(ab), [(true, "for bob".into(), false)]);
+        connect(&mut alice, &mut bob);
+        assert_eq!(alice.texts(ab), [(true, "for bob".into(), true)]);
+        assert!(alice.s.store.outbox_for(&bob.pk()).unwrap().is_empty());
     }
 
     #[test]
