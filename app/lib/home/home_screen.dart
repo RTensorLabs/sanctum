@@ -35,10 +35,13 @@ import '../theme/tokens.dart';
 import '../sigil/sigil_look.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.publicKey, required this.mySigil});
+  const HomeScreen({super.key, required this.publicKey, required this.mySigil, @visibleForTesting this.auth});
 
   final Uint8List publicKey;
   final SigilSpec mySigil;
+
+  /// The fingerprint / screen-lock check for hidden chats (tests pass a fake).
+  final LocalAuthentication? auth;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -179,6 +182,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       card = find();
     }
     if (card == null) return;
+    // A hidden chat needs the same check as showing hidden chats.
+    if (card.hidden && !_showHidden) {
+      if (!await _revealHidden()) return;
+      if (!mounted) return;
+    }
     _goTo(temp ? 1 : 0);
     await _open(card);
   }
@@ -477,18 +485,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
     if (!_chats.any((c) => c.hidden)) return;
+    if (!await _revealHidden() || !mounted) return;
+    _goTo(0);
+  }
+
+  /// Asks for the fingerprint or screen lock, then lists hidden chats.
+  /// False if the check failed or was cancelled.
+  Future<bool> _revealHidden() async {
     final ok = await AppLock.whileAway(() async {
       try {
-        final auth = LocalAuthentication();
+        final auth = widget.auth ?? LocalAuthentication();
         return !await auth.isDeviceSupported() || await auth.authenticate(localizedReason: 'Show hidden chats');
       } on LocalAuthException {
         return false;
+      } on PlatformException {
+        return false;
       }
     });
-    if (!ok || !mounted) return;
+    if (!ok || !mounted) return false;
     HapticFeedback.mediumImpact();
     setState(() => _showHidden = true);
-    _goTo(0);
+    return true;
   }
 
   Future<void> _setHidden(ChatCard card, bool hidden) async {
