@@ -557,7 +557,23 @@ impl Node {
         }
     }
 
-    async fn run(self: Arc<Self>, mut conn: BoxConn, role: Role) -> anyhow::Result<()> {
+    async fn run(self: Arc<Self>, conn: BoxConn, role: Role) -> anyhow::Result<()> {
+        // Nearby, nothing on the network vouches for who answered (over Tor
+        // the onion address does), and nothing encrypts the link: first
+        // both phones prove who they are and seal everything after. Never
+        // in the clear: phones that can't are left to Tor.
+        let signer = SessionSigner(self.session.clone());
+        let (mut conn, sealed_by) = timeout(HANDSHAKE_TIMEOUT, async {
+            match role {
+                Role::Reached(true) => {
+                    let (conn, who) = crate::secure::accept(conn, &signer).await?;
+                    Ok::<_, anyhow::Error>((conn, Some(who)))
+                }
+                Role::Dialed(peer, true) => Ok((crate::secure::dial(conn, &signer, peer).await?, Some(peer))),
+                _ => Ok((conn, None)),
+            }
+        })
+        .await??;
         let mut buf = Vec::new();
         // Each side's first frame also says what its build can do; older
         // builds don't say, and ignore what they're told.
@@ -579,6 +595,8 @@ impl Node {
             }
         })
         .await??;
+        // The hello inside a sealed link must come from whoever sealed it.
+        anyhow::ensure!(sealed_by.is_none_or(|who| who == peer), "hello from someone else");
 
         if !self.session.lock().unwrap().knows(&peer)? {
             // A stranger: hear their friend request, then hang up.
@@ -769,6 +787,19 @@ impl Node {
             }
         }
         Ok(())
+    }
+}
+
+/// Signs this phone's part of nearby handshakes.
+struct SessionSigner(Arc<Mutex<Session>>);
+
+impl crate::secure::Signer for SessionSigner {
+    fn public_key(&self) -> [u8; 32] {
+        self.0.lock().unwrap().public_key()
+    }
+
+    fn sign(&self, dialer: bool, transcript: &[u8; 32]) -> [u8; 64] {
+        self.0.lock().unwrap().sign_nearby_handshake(dialer, transcript)
     }
 }
 
@@ -1451,11 +1482,7 @@ mod tests {
                     let freeze = freeze.clone();
                     tokio::spawn(async move {
                         let mut chunk = [0u8; 4096];
-                        loop {
-                            let Ok(n) = from.read(&mut chunk).await else { break };
-                            if n == 0 {
-                                break;
-                            }
+                        while let Ok(n @ 1..) = from.read(&mut chunk).await {
                             while freeze.load(Ordering::Relaxed) {
                                 tokio::time::sleep(Duration::from_millis(20)).await;
                             }
@@ -1776,6 +1803,37 @@ mod tests {
         }
         let events = node.subscribe();
         Phone { node, session, pk, events, _dir: dir }
+    }
+
+    #[tokio::test]
+    async fn nearby_a_phone_answering_for_another_friend_gets_no_link() {
+        let ways = TwoWays { far: Arc::default(), near: Arc::default(), nearby_on: Arc::new(AtomicBool::new(true)) };
+        let (alice, bob, eve) = (two_way_phone(&ways).await, two_way_phone(&ways).await, two_way_phone(&ways).await);
+        befriend(&alice, &bob).await;
+        befriend(&alice, &eve).await;
+        // On the local network, "Bob" is really Eve's phone (another friend
+        // of Alice's, say, or anyone who copied his beacon).
+        let eve_near = ways.near.lock().unwrap()[&eve.pk];
+        ways.near.lock().unwrap().insert(bob.pk, eve_near);
+        alice.node.dial(bob.pk);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(alice.node.connected().is_empty(), "Alice took Eve for Bob");
+        assert!(eve.node.connected().is_empty());
+    }
+
+    #[tokio::test]
+    async fn nearby_listeners_say_nothing_in_the_clear() {
+        let ways = TwoWays { far: Arc::default(), near: Arc::default(), nearby_on: Arc::default() };
+        let bob = two_way_phone(&ways).await;
+        // An older phone (or anyone) connects and waits for the usual
+        // challenge: nothing comes, and nothing it sends is taken as a hello.
+        let near = ways.near.lock().unwrap()[&bob.pk];
+        let mut conn = TcpStream::connect(near).await.unwrap();
+        let mut buf = [0u8; 64];
+        assert!(timeout(Duration::from_millis(300), conn.read(&mut buf)).await.is_err(), "said something");
+        let far = ways.far.lock().unwrap()[&bob.pk];
+        let mut conn = TcpStream::connect(far).await.unwrap();
+        assert!(timeout(Duration::from_secs(2), conn.read(&mut buf)).await.unwrap().unwrap() > 0, "over Tor as before");
     }
 
     #[tokio::test]

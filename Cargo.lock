@@ -4353,6 +4353,7 @@ dependencies = [
  "arti-client",
  "async-trait",
  "blake3",
+ "chacha20poly1305",
  "futures",
  "if-addrs",
  "postcard",
@@ -4372,6 +4373,7 @@ dependencies = [
  "tor-llcrypto",
  "tor-rtcompat",
  "webpki-roots",
+ "x25519-dalek 2.0.1",
 ]
 
 [[package]]

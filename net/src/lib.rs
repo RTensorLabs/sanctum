@@ -9,6 +9,7 @@ pub mod engine;
 pub mod feedback;
 pub mod https;
 pub mod nearby;
+pub mod secure;
 pub mod tor;
 
 pub use engine::{NetEvent, Node, Transport};
