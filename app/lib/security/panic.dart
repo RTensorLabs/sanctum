@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../background/background.dart';
+import '../chat/media.dart';
 import '../identity/secrets.dart';
 import '../src/rust/api/session.dart';
 import '../theme/tokens.dart';
@@ -22,21 +23,29 @@ Future<void> panicWipe() async {
   await Background.stop();
   await Background.cancelAll();
   try {
-    final support = (await getApplicationSupportDirectory()).path;
-    final cache = (await getApplicationCacheDirectory()).path;
-    await wipeEverything(paths: [
-      for (final suffix in ['', '-wal', '-shm', '-journal']) '$support/sanctum.db$suffix',
-      '$support/tor-state',
-      '$support/media',
-      '$cache/tor-cache',
-      '$cache/open',
-      '$cache/outgoing',
-      '$cache/updates',
-    ]);
+    await wipeEverything(paths: await panicWipePaths());
   } catch (_) {
     // Already unreadable without the keys; leftovers are noise.
   }
   exit(0);
+}
+
+/// Everything of Sanctum's on disk that a panic wipe erases.
+@visibleForTesting
+Future<List<String>> panicWipePaths() async {
+  final support = (await getApplicationSupportDirectory()).path;
+  final cache = (await getApplicationCacheDirectory()).path;
+  return [
+    for (final suffix in ['', '-wal', '-shm', '-journal']) '$support/sanctum.db$suffix',
+    '$support/tor-state',
+    '$support/media',
+    '$cache/tor-cache',
+    '$cache/open',
+    '$cache/outgoing',
+    '$cache/updates',
+    // Open-once videos older versions left in the cache folder itself.
+    for (final f in legacyOnceCopies(cache)) f.path,
+  ];
 }
 
 /// Press and hold to wipe: impossible to trigger by accident, quick on
@@ -158,28 +167,42 @@ class _HoldToWipeState extends State<HoldToWipe> with SingleTickerProviderStateM
   }
 }
 
-/// What a panic wipe does, with the hold button.
+/// What a panic wipe does, with the hold button: the sheet from Settings,
+/// and the panel the lock screen draws itself (it sits above the app's
+/// screens, so it can't open a sheet there).
+class PanicPanel extends StatelessWidget {
+  const PanicPanel({super.key, this.onWipe});
+
+  /// Passed on to [HoldToWipe] (tests); otherwise wipes this phone.
+  final VoidCallback? onWipe;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('Erase Sanctum from this phone', style: AppText.title),
+          const SizedBox(height: Space.sm),
+          Text(
+            'Erases your identity, friends, every chat and temp chat from this phone, '
+            'and closes Sanctum. It can\'t be undone. Your friends keep their copies.',
+            style: AppText.caption,
+          ),
+          const SizedBox(height: Space.lg),
+          HoldToWipe(onWipe: onWipe),
+        ],
+      );
+}
+
+/// The panic sheet, from inside the app (Settings).
 Future<void> showPanicSheet(BuildContext context) => showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      // Not const: the panel takes the current colours (see Restyler).
       builder: (context) => SafeArea(
         child: Padding(
-          padding: EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.xl),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Erase Sanctum from this phone', style: AppText.title),
-              SizedBox(height: Space.sm),
-              Text(
-                'Erases your identity, friends, every chat and temp chat from this phone, '
-                'and closes Sanctum. It can\'t be undone. Your friends keep their copies.',
-                style: AppText.caption,
-              ),
-              SizedBox(height: Space.lg),
-              HoldToWipe(),
-            ],
-          ),
+          padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.xl),
+          child: PanicPanel(),
         ),
       ),
     );

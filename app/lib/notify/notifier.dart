@@ -52,6 +52,10 @@ class Notifier with WidgetsBindingObserver {
     _resumed();
   }
 
+  /// Acts as if the notification for [key] was tapped (tests).
+  @visibleForTesting
+  void debugOpen(String key) => _opened(key);
+
   /// A notification was tapped: a call's goes to the call, others to
   /// their chat.
   void _opened(String key) {

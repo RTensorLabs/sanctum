@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:sanctum/chat/chat_screen.dart';
 import 'package:sanctum/deck/chat_tile.dart';
 import 'package:sanctum/home/home_screen.dart';
 import 'package:sanctum/net/net_bus.dart';
@@ -53,6 +55,27 @@ Future<void> loadFonts() async {
 }
 
 final _shotKey = GlobalKey();
+
+/// A fingerprint check that passes or fails on demand.
+class _FakeAuth extends LocalAuthentication {
+  bool pass = false;
+  int asked = 0;
+
+  @override
+  Future<bool> isDeviceSupported() async => true;
+
+  @override
+  Future<bool> authenticate({
+    required String localizedReason,
+    Iterable<Object> authMessages = const <Object>[],
+    bool biometricOnly = false,
+    bool sensitiveTransaction = true,
+    bool persistAcrossBackgrounding = false,
+  }) async {
+    asked++;
+    return pass;
+  }
+}
 
 /// Saves a PNG of the app when SCREENSHOT_DIR is set.
 Future<void> shot(WidgetTester tester, String name) async {
@@ -311,6 +334,56 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: sanctumTheme(accent: mine.accent.color), home: home));
     await settle(tester);
     expect(find.text('Notes to self'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await settle(tester, 2);
+  });
+
+  testWidgets('a notification never opens a hidden chat without the fingerprint check', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    final auth = _FakeAuth();
+    late HomeScreen home;
+    late int notes;
+    await tester.runAsync(() async {
+      final pk = await identityPublicKey(secret: await identityNew());
+      home = HomeScreen(publicKey: pk, mySigil: await sigilForKey(publicKey: pk), auth: auth);
+    });
+    await tester.pumpWidget(MaterialApp(theme: sanctumTheme(), home: home));
+    await settle(tester);
+    await tester.runAsync(() async {
+      notes = (await chatList()).firstWhere((c) => c.kind == ChatKindView.notes).id.toInt();
+      await chatSetHidden(id: PlatformInt64Util.from(notes), hidden: true);
+    });
+    addTearDown(() => tester.runAsync(() => chatSetHidden(id: PlatformInt64Util.from(notes), hidden: false)));
+    // A fresh home screen, which knows the chat is hidden.
+    await tester.pumpWidget(const SizedBox());
+    await settle(tester, 2);
+    await tester.pumpWidget(MaterialApp(theme: sanctumTheme(), home: home));
+    await settle(tester);
+    expect(find.text('Notes to self'), findsNothing);
+
+    // The check fails (or is cancelled): the chat stays closed.
+    Notifier.instance.debugOpen(Notifier.chatKey(notes));
+    await settle(tester);
+    expect(auth.asked, 1);
+    expect(find.byType(ChatScreen), findsNothing);
+
+    // It passes: the chat opens.
+    auth.pass = true;
+    Notifier.instance.debugOpen(Notifier.chatKey(notes));
+    await settle(tester);
+    expect(auth.asked, 2);
+    expect(find.byType(ChatScreen), findsOneWidget);
+    await tester.tap(find.byTooltip('Back'));
+    await settle(tester);
+
+    // Hidden chats are showing now: no second check until they're hidden again.
+    Notifier.instance.debugOpen(Notifier.chatKey(notes));
+    await settle(tester);
+    expect(auth.asked, 2);
+    expect(find.byType(ChatScreen), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
     await settle(tester, 2);

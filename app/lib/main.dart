@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'home/home_screen.dart';
@@ -88,10 +89,20 @@ Future<void> _start() async {
 }
 
 class SanctumApp extends StatelessWidget {
-  const SanctumApp({super.key, required this.home, required this.mySigil});
+  const SanctumApp({
+    super.key,
+    required this.home,
+    required this.mySigil,
+    @visibleForTesting this.lockAuth,
+    @visibleForTesting this.onWipe,
+  });
 
   final Widget home;
   final SigilSpec mySigil;
+
+  /// Stand-ins for the fingerprint check and the emergency wipe (tests).
+  final LocalAuthentication? lockAuth;
+  final VoidCallback? onWipe;
 
   @override
   Widget build(BuildContext context) {
@@ -103,7 +114,8 @@ class SanctumApp extends StatelessWidget {
         theme: sanctumTheme(accent: mySigil.look.accent.color),
         // Calls show above the lock, so they can be answered without
         // unlocking (saying who only once unlocked).
-        builder: (context, child) => CallLayer(child: AppLock(sigil: mySigil, child: child!)),
+        builder: (context, child) =>
+            CallLayer(child: AppLock(sigil: mySigil, auth: lockAuth, onWipe: onWipe, child: child!)),
         home: home,
       ),
     );

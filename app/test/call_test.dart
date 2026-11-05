@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -9,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sanctum/call/call_controller.dart';
 import 'package:sanctum/call/call_screen.dart';
+import 'package:sanctum/security/app_lock.dart';
 import 'package:sanctum/settings/settings_screen.dart';
 import 'package:sanctum/sigil/sigil_painter.dart';
 import 'package:sanctum/src/rust/api/call.dart';
@@ -307,6 +309,105 @@ void main() {
     await _shot(tester, 'call-8-camera-only-light');
     await tester.runAsync(() => Appearance.setTheme(ThemeChoice.dark));
 
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('answering twice answers once, and a refused microphone is explained', (tester) async {
+    final calls = CallController.instance;
+    final asked = <String>[];
+    final mic = Completer<bool>();
+    const channel = MethodChannel('sanctum/app');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      asked.add(call.method);
+      return call.method == 'requestMicrophone' ? mic.future : null;
+    });
+    final notices = <String?>[];
+    void heard() => notices.add(calls.notice.value);
+    calls.notice.addListener(heard);
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null);
+      calls.notice.removeListener(heard);
+      calls.call.value = null;
+      calls.notice.value = null;
+    });
+
+    calls.call.value = _call(CallPhaseView.ringing, outgoing: false);
+    final first = calls.answer();
+    final second = calls.answer();
+    Future<void> settle() async {
+      for (var i = 0; i < 6; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    await settle();
+    expect(asked.where((m) => m == 'requestMicrophone'), hasLength(1));
+
+    mic.complete(false);
+    await settle();
+    await first;
+    await second;
+    expect(notices, contains(startsWith('Calls need the microphone.')));
+  });
+
+  testWidgets('a shrunk call bar says who only while unlocked', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    final calls = CallController.instance;
+    final wasLocked = AppLock.locked.value;
+    addTearDown(() {
+      calls.call.value = null;
+      AppLock.locked.value = wasLocked;
+    });
+    AppLock.locked.value = false;
+    await tester.pumpWidget(RepaintBoundary(
+      key: _shotKey,
+      child: Restyler(
+        builder: (_) => MaterialApp(
+          theme: sanctumTheme(accent: Palette.accents.first),
+          debugShowCheckedModeBanner: false,
+          builder: (context, child) => CallLayer(child: child!),
+          home: const Scaffold(body: Center(child: Text('the app'))),
+        ),
+      ),
+    ));
+    Future<void> settle() async {
+      for (var i = 0; i < 6; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    for (final light in [false, true]) {
+      await tester.runAsync(() => Appearance.setTheme(light ? ThemeChoice.light : ThemeChoice.dark));
+      AppLock.locked.value = false;
+      calls.call.value = _call(CallPhaseView.active);
+      await settle();
+      // Shrink it to use the app.
+      await tester.tap(find.byIcon(Icons.keyboard_arrow_down_rounded));
+      await settle();
+      expect(find.textContaining('Asha · '), findsOneWidget);
+      await _shot(tester, 'call-9-bar${light ? '-light' : ''}');
+
+      // The phone locks: the bar stays, but doesn't say who.
+      AppLock.locked.value = true;
+      await settle();
+      expect(find.textContaining('Asha'), findsNothing);
+      expect(find.textContaining('Sanctum · '), findsOneWidget);
+      await _shot(tester, 'call-10-bar-locked${light ? '-light' : ''}');
+
+      // A hidden chat's call doesn't say who even when unlocked.
+      AppLock.locked.value = false;
+      calls.call.value = _call(CallPhaseView.active, hidden: true);
+      await settle();
+      expect(find.textContaining('Asha'), findsNothing);
+      expect(find.textContaining('Sanctum · '), findsOneWidget);
+      calls.call.value = null;
+      await settle();
+    }
+    await tester.runAsync(() => Appearance.setTheme(ThemeChoice.dark));
     await tester.pumpWidget(const SizedBox());
   });
 

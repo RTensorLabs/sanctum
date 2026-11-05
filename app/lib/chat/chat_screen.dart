@@ -76,6 +76,14 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   double _level = 0;
   Timer? _recordTick;
 
+  /// The finger is on the mic. Starting takes a moment (and the first time,
+  /// the microphone question), so a finger lifted meanwhile cancels it.
+  bool _micDown = false;
+
+  /// Counts presses on the mic, so a slow start from an earlier press
+  /// never records for a later one.
+  int _micPress = 0;
+
   /// Bubbles on screen, by their place in the list (a sent message keeps
   /// its place when it gets its sequence number, so it isn't rebuilt):
   /// tapping a quote scrolls there.
@@ -521,7 +529,25 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         ),
       ];
     });
-    await widget.card.source.send(body, replyTo: replyTo?.seq);
+    try {
+      await widget.card.source.send(body, replyTo: replyTo?.seq);
+    } catch (_) {
+      // Not sent: put the words back in the box (before anything typed
+      // meanwhile), keep them as the draft too, and say so plainly.
+      if (mounted && _editing == null) {
+        final typed = _input.text;
+        final text = typed.trim().isEmpty ? body : '$body\n$typed';
+        _input.value = TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
+        _draftSave?.cancel();
+        _saveDraft();
+        if (_replyTo == null) setState(() => _replyTo = replyTo);
+      } else if (!mounted && _stored && widget.card.draft.trim().isEmpty) {
+        // The chat was closed meanwhile: keep the words as its draft.
+        widget.card.draft = body;
+        chatSetDraft(chatId: widget.card.id, text: body).ignore();
+      }
+      if (mounted) _snack('Couldn\'t send. Try again.');
+    }
     await _reload();
   }
 
@@ -1369,20 +1395,33 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _recordBegin() async {
+    if (_recording) return;
+    final press = ++_micPress;
+    _micDown = true;
+    bool held() => mounted && _micDown && press == _micPress;
     if (!await Background.requestMicrophone()) {
+      if (press == _micPress) _micDown = false;
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('Allow the microphone to record voice notes.')));
       }
       return;
     }
+    // Let go while the microphone was being asked for: don't record.
+    if (!held()) return;
     if (!await Background.recordStart()) return;
+    if (!held()) {
+      // Let go while it was starting.
+      await Background.recordCancel();
+      return;
+    }
     HapticFeedback.mediumImpact();
     setState(() {
       _recording = true;
       _cancelArmed = false;
       _recordStart = DateTime.now();
     });
+    _recordTick?.cancel();
     _recordTick = Timer.periodic(const Duration(milliseconds: 100), (_) async {
       final level = await Background.recordLevel();
       if (mounted && _recording) setState(() => _level = (level / 20000).clamp(0.0, 1.0));
@@ -1390,6 +1429,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _recordEnd() async {
+    _micDown = false;
     _recordTick?.cancel();
     if (!_recording) return;
     final cancel = _cancelArmed;
@@ -1537,6 +1577,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                       }
                     },
                     onLongPressEnd: (_) => _recordEnd(),
+                    // The phone took the touch away (e.g. for the microphone
+                    // question): stop, and keep nothing.
+                    onLongPressCancel: () {
+                      if (_recording) _cancelArmed = true;
+                      _recordEnd();
+                    },
                     onTap: () => ScaffoldMessenger.of(context)
                       ..hideCurrentSnackBar()
                       ..showSnackBar(const SnackBar(content: Text('Hold to record a voice note.'))),
