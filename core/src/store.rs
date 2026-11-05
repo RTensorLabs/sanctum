@@ -794,9 +794,12 @@ impl Store {
         Ok(())
     }
 
+    /// Adds an item, or updates one in place: it keeps its turn (the
+    /// outbox goes out oldest first).
     pub fn outbox_put(&self, id: &[u8; 16], item: &OutboxItem) -> Result<()> {
         self.db.execute(
-            "INSERT OR REPLACE INTO outbox (id, peer, sealed) VALUES (?1, ?2, ?3)",
+            "INSERT INTO outbox (id, peer, sealed) VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET peer = excluded.peer, sealed = excluded.sealed",
             params![
                 id.as_slice(),
                 self.peer_index(&item.peer),
@@ -2032,6 +2035,26 @@ mod tests {
         assert!(s.messages(chat, None).unwrap()[0].delivered);
         assert!(s.outbox_for(&peer).unwrap().is_empty());
         assert!(s.outbox_remove(&pending[0].0).unwrap().is_none());
+    }
+
+    #[test]
+    fn updating_an_outbox_item_keeps_its_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("s.db"), &[6; 32]).unwrap();
+        let peer = [1u8; 32];
+        let item = |b: u8| OutboxItem { peer, state: OutboxState::Plain(vec![b]), message: None };
+        for id in [3u8, 1, 2] {
+            s.outbox_put(&[id; 16], &item(id)).unwrap();
+        }
+        // The first one is encrypted (updated) after the others were queued.
+        s.outbox_put(
+            &[3; 16],
+            &OutboxItem { peer, state: OutboxState::Sealed { plain: vec![3], cipher: vec![9] }, message: None },
+        )
+        .unwrap();
+        let order: Vec<u8> = s.outbox_for(&peer).unwrap().into_iter().map(|(id, _)| id[0]).collect();
+        assert_eq!(order, [3, 1, 2]);
+        assert!(matches!(s.outbox_for(&peer).unwrap()[0].1.state, OutboxState::Sealed { .. }));
     }
 
     #[test]
