@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -25,6 +26,9 @@ import 'package:sanctum/theme/sigil_theme.dart';
 class _FakeSource implements MessageSource {
   final stored = <ChatMessage>[];
 
+  /// Sending fails (no connection, a full disk...).
+  bool fail = false;
+
   @override
   bool get replies => true;
 
@@ -37,6 +41,7 @@ class _FakeSource implements MessageSource {
   @override
   Future<void> send(String body, {int? replyTo}) async {
     await Future<void>.delayed(const Duration(milliseconds: 60));
+    if (fail) throw Exception('disk full at /data/secret/path');
     stored.add(ChatMessage(body: body, fromMe: true, sentAt: DateTime.now(), seq: stored.length + 1, canEdit: true));
   }
 
@@ -164,4 +169,157 @@ void main() {
     expect(find.text('Editing your message'), findsNothing);
     await _shot(tester, 'chat_edited');
   });
+
+  // [wide]: room for the recording bar in the test font (wider than the app's).
+  Future<_FakeSource> showChat(WidgetTester tester, {bool wide = false}) async {
+    tester.view.physicalSize = Size(wide ? 1600 : 1080, 2340);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    final source = _FakeSource();
+    late SigilSpec sigil;
+    await tester.runAsync(() async {
+      sigil = await sigilForKey(publicKey: await identityPublicKey(secret: await identityNew()));
+    });
+    final card = ChatCard(id: 1, title: 'Friend', sigil: sigil, source: source);
+    await tester.pumpWidget(Restyler(
+      builder: (_) => MaterialApp(
+        theme: sanctumTheme(accent: sigil.look.accent.color),
+        home: RepaintBoundary(key: _shotKey, child: ChatScreen(card: card, close: () {})),
+      ),
+    ));
+    await settleFor(tester);
+    return source;
+  }
+
+  testWidgets('a message that fails to send goes back in the box, with a plain note', (tester) async {
+    final source = await showChat(tester);
+    source.fail = true;
+    await tester.enterText(find.byType(TextField).last, 'please arrive');
+    await tester.pump();
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byType(TextField).last).controller!.text, isEmpty);
+    await settleFor(tester);
+
+    expect(tester.widget<TextField>(find.byType(TextField).last).controller!.text, 'please arrive');
+    expect(find.text('Couldn\'t send. Try again.'), findsOneWidget);
+    expect(find.textContaining('disk full'), findsNothing, reason: 'never raw error text');
+    expect(find.text('please arrive'), findsOneWidget, reason: 'only in the box, not as a sent bubble');
+    expect(source.stored, isEmpty);
+
+    // Trying again (once the note has gone) sends it.
+    await tester.pump(const Duration(seconds: 5));
+    await settleFor(tester, 3);
+    source.fail = false;
+    await tester.tap(find.byTooltip('Send'));
+    await settleFor(tester);
+    expect(source.stored.single.body, 'please arrive');
+    expect(tester.widget<TextField>(find.byType(TextField).last).controller!.text, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  group('voice notes', () {
+    late Completer<bool> mic;
+    late Completer<bool> started;
+    late List<String> calls;
+    setUp(() {
+      mic = Completer<bool>();
+      started = Completer<bool>();
+      calls = [];
+    });
+
+    void fakeRecorder(WidgetTester tester) {
+      const channel = MethodChannel('sanctum/app');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        return switch (call.method) {
+          'requestMicrophone' => mic.future,
+          'recordStart' => started.future,
+          'recordLevel' => 0,
+          _ => null,
+        };
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+    }
+
+    Finder micButton() => find.byIcon(Icons.mic_rounded);
+
+    testWidgets('letting go while the microphone question is up never starts recording', (tester) async {
+      await showChat(tester, wide: true);
+      fakeRecorder(tester);
+      final press = await tester.startGesture(tester.getCenter(micButton()));
+      await tester.pump(const Duration(milliseconds: 700));
+      await settleFor(tester, 2);
+      expect(calls, ['requestMicrophone']);
+      await press.up();
+      await tester.pump();
+      mic.complete(true);
+      started.complete(true);
+      await settleFor(tester, 3);
+      expect(calls, isNot(contains('recordStart')));
+      expect(find.text('‹ Slide to cancel'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('the phone taking the touch away for the question never starts recording', (tester) async {
+      await showChat(tester, wide: true);
+      fakeRecorder(tester);
+      final press = await tester.startGesture(tester.getCenter(micButton()));
+      await tester.pump(const Duration(milliseconds: 700));
+      await settleFor(tester, 2);
+      await press.cancel();
+      await tester.pump();
+      mic.complete(true);
+      started.complete(true);
+      await settleFor(tester, 3);
+      expect(calls, isNot(contains('recordStart')));
+      expect(find.text('‹ Slide to cancel'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('letting go while recording starts stops it at once', (tester) async {
+      await showChat(tester, wide: true);
+      fakeRecorder(tester);
+      mic.complete(true);
+      final press = await tester.startGesture(tester.getCenter(micButton()));
+      await tester.pump(const Duration(milliseconds: 700));
+      await settleFor(tester, 2);
+      expect(calls, ['requestMicrophone', 'recordStart']);
+      await press.up();
+      await tester.pump();
+      started.complete(true);
+      await settleFor(tester, 3);
+      expect(calls, ['requestMicrophone', 'recordStart', 'recordCancel']);
+      expect(find.text('‹ Slide to cancel'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('holding records, letting go stops, and one press makes one recording', (tester) async {
+      await showChat(tester, wide: true);
+      fakeRecorder(tester);
+      mic.complete(true);
+      started.complete(true);
+      final press = await tester.startGesture(tester.getCenter(micButton()));
+      await tester.pump(const Duration(milliseconds: 700));
+      await settleFor(tester, 2);
+      expect(find.text('‹ Slide to cancel'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 500));
+      final levels = calls.where((c) => c == 'recordLevel').length;
+      expect(levels, greaterThan(0));
+      await press.up();
+      await settleFor(tester, 3);
+      expect(calls.where((c) => c == 'recordStart'), hasLength(1));
+      expect(calls, contains('recordStop'));
+      expect(calls.where((c) => c == 'recordLevel'), hasLength(levels), reason: 'level checks stop with recording');
+      expect(find.text('‹ Slide to cancel'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+}
+
+Future<void> settleFor(WidgetTester tester, [int frames = 8]) async {
+  for (var i = 0; i < frames; i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 40)));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
