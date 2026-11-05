@@ -6,6 +6,7 @@ use crate::engine::BoxConn;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
@@ -16,6 +17,15 @@ pub type Connect = Arc<dyn Fn(String, u16) -> Pin<Box<dyn Future<Output = anyhow
 
 const MAX_REDIRECTS: usize = 5;
 const MAX_HEADERS: usize = 64 * 1024;
+/// Connecting, or waiting for the next bytes, gives up after this long:
+/// a download that stops moving fails instead of waiting forever. (A slow
+/// one that keeps moving is fine.)
+pub const STALL: Duration = Duration::from_secs(90);
+
+/// `step`, unless it takes longer than `stall`.
+async fn within<T, E: Into<anyhow::Error>>(stall: Duration, step: impl Future<Output = Result<T, E>>) -> anyhow::Result<T> {
+    tokio::time::timeout(stall, step).await.map_err(|_| anyhow::anyhow!("the connection stalled"))?.map_err(Into::into)
+}
 
 /// GETs `url` (https only), following redirects, reading at most `limit`
 /// bytes of body. `progress` hears (received, total if known).
@@ -52,7 +62,7 @@ fn mozilla_roots() -> RootCertStore {
 }
 
 async fn redirect_trusting(connect: &Connect, url: &str, roots: RootCertStore) -> anyhow::Result<String> {
-    match fetch(connect, url, 1 << 20, &|_, _| {}, roots, ResponseMode::Location).await? {
+    match fetch(connect, url, 1 << 20, &|_, _| {}, roots, ResponseMode::Location, STALL).await? {
         Fetched::Location(to) => Ok(to),
         Fetched::Body(_) => anyhow::bail!("expected a response location"),
     }
@@ -65,7 +75,18 @@ async fn get_trusting(
     progress: &(dyn Fn(u64, Option<u64>) + Sync),
     roots: RootCertStore,
 ) -> anyhow::Result<Vec<u8>> {
-    match fetch(connect, url, limit, progress, roots, ResponseMode::Body).await? {
+    get_within(connect, url, limit, progress, roots, STALL).await
+}
+
+async fn get_within(
+    connect: &Connect,
+    url: &str,
+    limit: usize,
+    progress: &(dyn Fn(u64, Option<u64>) + Sync),
+    roots: RootCertStore,
+    stall: Duration,
+) -> anyhow::Result<Vec<u8>> {
+    match fetch(connect, url, limit, progress, roots, ResponseMode::Body, stall).await? {
         Fetched::Body(body) => Ok(body),
         Fetched::Location(_) => anyhow::bail!("expected a response body"),
     }
@@ -89,6 +110,7 @@ async fn fetch(
     progress: &(dyn Fn(u64, Option<u64>) + Sync),
     roots: RootCertStore,
     mode: ResponseMode,
+    stall: Duration,
 ) -> anyhow::Result<Fetched> {
     crate::tor::install_crypto();
     let tls = TlsConnector::from(Arc::new(ClientConfig::builder().with_root_certificates(roots).with_no_client_auth()));
@@ -96,12 +118,12 @@ async fn fetch(
     let mut url = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
         let (host, port, path) = parse_url(&url)?;
-        let tcp = connect(host.clone(), port).await?;
-        let mut stream = tls.connect(ServerName::try_from(host.clone())?, tcp).await?;
+        let tcp = within(stall, connect(host.clone(), port)).await?;
+        let mut stream = within(stall, tls.connect(ServerName::try_from(host.clone())?, tcp)).await?;
         let request =
             format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Sanctum\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
-        stream.write_all(request.as_bytes()).await?;
-        stream.flush().await?;
+        within(stall, stream.write_all(request.as_bytes())).await?;
+        within(stall, stream.flush()).await?;
 
         // Headers.
         let mut buf = Vec::new();
@@ -111,7 +133,7 @@ async fn fetch(
                 break i + 4;
             }
             anyhow::ensure!(buf.len() < MAX_HEADERS, "response headers too long");
-            let n = stream.read(&mut chunk).await?;
+            let n = within(stall, stream.read(&mut chunk)).await?;
             anyhow::ensure!(n > 0, "connection closed before the response");
             buf.extend_from_slice(&chunk[..n]);
         };
@@ -124,7 +146,7 @@ async fn fetch(
             continue;
         }
         if head.status != 200 {
-            let n = stream.read(&mut chunk).await.unwrap_or(0);
+            let n = within(stall, stream.read(&mut chunk)).await.unwrap_or(0);
             body.extend_from_slice(&chunk[..n]);
             let said = String::from_utf8_lossy(&body[..body.len().min(160)]).into_owned();
             anyhow::bail!("HTTP {} from {host}: {}", head.status, said.trim());
@@ -143,7 +165,10 @@ async fn fetch(
             if total.is_some_and(|t| body.len() as u64 >= t) {
                 break;
             }
-            let n = stream.read(&mut chunk).await.or_else(|e| {
+            let read = tokio::time::timeout(stall, stream.read(&mut chunk))
+                .await
+                .map_err(|_| anyhow::anyhow!("the download stalled"))?;
+            let n = read.or_else(|e| {
                 // Servers often close TLS without a close_notify after the
                 // body; with a known length that's harmless.
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -325,6 +350,19 @@ mod tests {
         let body = get_trusting(&server.connect, &format!("{}/old/download", server.origin), 1024, &|_, _| {}, server.roots).await.unwrap();
         assert_eq!(body, b"PKfixture");
         server.task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_download_that_stops_coming_fails_instead_of_waiting_forever() {
+        // Headers promise 4 MB, then nothing comes and the server holds on.
+        let server = test_server(vec![("/apk", 200, None, None)]).await;
+        let url = format!("{}/apk", server.origin);
+        let started = std::time::Instant::now();
+        let result =
+            get_within(&server.connect, &url, 8 << 20, &|_, _| {}, server.roots, Duration::from_millis(300)).await;
+        assert!(result.unwrap_err().to_string().contains("stalled"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        server.task.abort();
     }
 
     #[tokio::test]
