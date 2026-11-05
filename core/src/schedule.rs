@@ -121,7 +121,9 @@ impl Session {
                     self.scheduled_tries.remove(&s.id);
                     self.pokes.extend(reach);
                 }
-                Err(SessionError::NoSuchChat | SessionError::Store(StoreError::NoSuchChat) | SessionError::NotAFriend) => {
+                Err(
+                    SessionError::NoSuchChat | SessionError::Store(StoreError::NoSuchChat) | SessionError::NotAFriend,
+                ) => {
                     self.scheduled_tries.remove(&s.id);
                 }
                 Err(_) => {
