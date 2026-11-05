@@ -19,7 +19,13 @@ import '../sigil/sigil_look.dart';
 /// The app stays mounted underneath, so unlocking returns you to exactly
 /// where you were.
 class AppLock extends StatefulWidget {
-  const AppLock({super.key, required this.child, required this.sigil, @visibleForTesting this.auth});
+  const AppLock({
+    super.key,
+    required this.child,
+    required this.sigil,
+    this.auth,
+    this.onWipe,
+  });
 
   final Widget child;
 
@@ -28,6 +34,9 @@ class AppLock extends StatefulWidget {
 
   /// The system fingerprint / screen-lock check (tests pass a fake).
   final LocalAuthentication? auth;
+
+  /// What holding "Emergency wipe" does (tests); otherwise erases the phone.
+  final VoidCallback? onWipe;
 
   @override
   State<AppLock> createState() => _AppLockState();
@@ -99,6 +108,16 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
   bool _wrongPin = false;
   late final _shake = AnimationController(vsync: this, duration: const Duration(milliseconds: 420));
 
+  /// The emergency wipe panel is open. The lock screen draws it itself: it
+  /// sits above the app's screens, which are hidden while locked, so a
+  /// sheet opened the usual way would never show.
+  bool _wipeOpen = false;
+
+  void _showWipe(bool open) {
+    if (open) HapticFeedback.selectionClick();
+    setState(() => _wipeOpen = open);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -129,7 +148,10 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
     await Profile.enter(decoy: decoy);
     if (changed) AppLock.navigator.currentState?.popUntil((r) => r.isFirst);
     HapticFeedback.mediumImpact();
-    setState(() => _entered = '');
+    setState(() {
+      _entered = '';
+      _wipeOpen = false;
+    });
     await _lock.reverse();
   }
 
@@ -191,6 +213,7 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
       _promptWhenVisible = true;
       _entered = '';
       _failure = null;
+      _wipeOpen = false;
       _refreshPinMode();
     }
     if (state == AppLifecycleState.resumed) _maybePrompt();
@@ -314,7 +337,12 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
             if (t > 0)
               Opacity(
                 opacity: t,
-                child: Transform.scale(scale: 1 + 0.25 * (1 - t), child: _lockScreen()),
+                child: Transform.scale(
+                  scale: 1 + 0.25 * (1 - t),
+                  // Its own overlay: the app's (for hints on the keypad)
+                  // is below, with the screens hidden while locked.
+                  child: Overlay.wrap(child: _lockLayer()),
+                ),
               ),
           ],
         );
@@ -416,7 +444,7 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
             ),
             const Spacer(),
             TextButton(
-              onPressed: () => showPanicSheet(context),
+              onPressed: () => _showWipe(true),
               child: Text('Emergency wipe', style: AppText.micro.copyWith(color: Palette.textFaint)),
             ),
           ],
@@ -424,6 +452,41 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
       ),
     );
   }
+
+  /// The lock screen, with the emergency wipe panel over it when open.
+  Widget _lockLayer() => Stack(
+        fit: StackFit.expand,
+        children: [
+          _lockScreen(),
+          if (_wipeOpen) ...[
+            Semantics(
+              label: 'Close',
+              button: true,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _showWipe(false),
+                child: ColoredBox(color: Theme.of(context).bottomSheetTheme.modalBarrierColor ?? Colors.black54),
+              ),
+            ),
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Material(
+                key: const ValueKey('lock-wipe-panel'),
+                color: Palette.surface,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(Radii.xl)),
+                clipBehavior: Clip.antiAlias,
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.all(Space.xl),
+                    child: PanicPanel(onWipe: widget.onWipe),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      );
 
   Widget _lockScreen() {
     if (_pinMode) return _pinScreen();
@@ -474,7 +537,7 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
               alignment: Alignment.bottomCenter,
               child: SafeArea(
                 child: TextButton(
-                  onPressed: () => showPanicSheet(context),
+                  onPressed: () => _showWipe(true),
                   child: Text('Emergency wipe', style: AppText.micro.copyWith(color: Palette.textFaint)),
                 ),
               ),

@@ -6,7 +6,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:sanctum/identity/secrets.dart';
+import 'package:sanctum/main.dart';
 import 'package:sanctum/security/app_lock.dart';
+import 'package:sanctum/security/panic.dart';
 import 'package:sanctum/src/rust/api/identity.dart';
 import 'package:sanctum/src/rust/api/sigil.dart';
 import 'package:sanctum/src/rust/frb_generated.dart';
@@ -128,5 +131,77 @@ void main() {
     expect(auth.authenticateCalls, 2);
     expect(auth.stopCalls, 1);
     await tester.pump(const Duration(seconds: 40));
+  });
+
+  /// The whole app as it really runs: the lock sits in MaterialApp's
+  /// builder, above the navigator and the screens it hides while locked.
+  Future<List<int>> showApp(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    await tester.runAsync(() async {
+      sigil = await sigilForKey(publicKey: await identityPublicKey(secret: await identityNew()));
+    });
+    final auth = _FakeAuth()
+      ..onAuthenticate = () async => throw const LocalAuthException(code: LocalAuthExceptionCode.userCanceled);
+    final wipes = <int>[];
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpWidget(SanctumApp(
+      home: const Scaffold(body: Text('inside')),
+      mySigil: sigil,
+      lockAuth: auth,
+      onWipe: () => wipes.add(1),
+    ));
+    for (var i = 0; i < 5; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(AppLock.locked.value, isTrue);
+    expect(find.text('inside'), findsNothing, reason: 'the app is hidden while locked');
+    return wipes;
+  }
+
+  Future<void> holdToWipe(WidgetTester tester, List<int> wipes) async {
+    await tester.tap(find.text('Emergency wipe'));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('lock-wipe-panel')), findsOneWidget);
+    expect(find.text('Erase Sanctum from this phone'), findsOneWidget);
+    expect(find.text('Hold to erase this phone'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // Tapping outside closes it without erasing anything.
+    await tester.tapAt(const Offset(20, 60));
+    await tester.pump();
+    expect(find.byType(PanicPanel), findsNothing);
+    expect(wipes, isEmpty);
+
+    await tester.tap(find.text('Emergency wipe'));
+    await tester.pump();
+    final press = await tester.startGesture(tester.getCenter(find.byType(HoldToWipe)));
+    await tester.pump(const Duration(seconds: 1));
+    expect(wipes, isEmpty, reason: 'a short press never erases');
+    await tester.pump(const Duration(milliseconds: 1001));
+    expect(wipes, [1]);
+    await press.up();
+    expect(AppLock.locked.value, isTrue, reason: 'erasing never needs unlocking first');
+    await tester.pumpWidget(const SizedBox());
+  }
+
+  testWidgets('Emergency wipe works on the lock screen as the app really mounts it', (tester) async {
+    final wipes = await showApp(tester);
+    expect(find.text('TAP TO UNLOCK'), findsOneWidget);
+    await holdToWipe(tester, wipes);
+  });
+
+  testWidgets('Emergency wipe works on the PIN lock screen too', (tester) async {
+    await tester.runAsync(() => setPin('2468'));
+    addTearDown(() => tester.runAsync(removePin));
+    final wipes = await showApp(tester);
+    expect(find.text('Unlock'), findsOneWidget);
+    // The keypad's hints need an overlay above the app's screens too.
+    await tester.longPress(find.byTooltip('Delete'));
+    await tester.pump(const Duration(seconds: 2));
+    expect(tester.takeException(), isNull);
+    await holdToWipe(tester, wipes);
   });
 }
