@@ -135,6 +135,11 @@ pub enum Frame {
         blob: BlobId,
         from: u32,
     },
+    /// The time on the sender's phone (Unix milliseconds), sent once as a
+    /// link comes up, only to phones that understand it
+    /// ([`FEATURE_CLOCK`]). Lets a call invite be judged on the phone's own
+    /// clock even if the caller's is off (see `call`). Never stored.
+    Clock { ms: u64 },
 }
 
 /// A group message as members know it: a hash of its sealed bytes, the
@@ -165,10 +170,12 @@ pub struct HaveBlob {
 
 /// What this build can do, told to the other phone with the handshake
 /// (see [`encode_frame_with_features`]).
-pub const FEATURES: u32 = FEATURE_GROUP_SYNC;
+pub const FEATURES: u32 = FEATURE_GROUP_SYNC | FEATURE_CLOCK;
 /// Understands [`Frame::GroupHave`], [`Frame::GroupWant`] and
 /// [`Frame::BlobWant`], and passes group messages and files on.
 pub const FEATURE_GROUP_SYNC: u32 = 1;
+/// Understands [`Frame::Clock`].
+pub const FEATURE_CLOCK: u32 = 2;
 const FEATURES_TAG: &[u8] = b"SNF1";
 
 /// A call's id, made by the caller.
@@ -616,6 +623,12 @@ mod tests {
         let have = Frame::GroupHave { group: vec![1], ids: Vec::new(), blobs: Vec::new() };
         assert_eq!(have.to_bytes()[0], 16);
         assert_eq!(Frame::GroupWant { group: vec![1], ids: Vec::new() }.to_bytes()[0], 17);
+        let clock = Frame::Clock { ms: 1_700_000_000_000 };
+        assert_eq!(clock.to_bytes()[0], 19);
+        assert_eq!(Frame::from_bytes(&clock.to_bytes()), Some(clock));
+        // Only sent to phones that said they understand it.
+        assert_ne!(FEATURES & FEATURE_CLOCK, 0);
+        assert_eq!(FEATURE_CLOCK & FEATURE_GROUP_SYNC, 0);
         assert_eq!(Frame::BlobWant { group: vec![1], blob: [0; 16], from: 0 }.to_bytes()[0], 18);
         assert_eq!(Content::MomentSeen { id: [0; 16] }.encode()[0], 28);
         assert_eq!(Content::Pin { id: None, at: 1 }.encode()[0], 29);

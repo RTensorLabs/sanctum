@@ -6,7 +6,7 @@ use crate::direct::DirectSocket;
 use async_trait::async_trait;
 use sanctum_core::call::{MediaHub, Outgoing, Route, VideoSent};
 use sanctum_core::protocol::{
-    encode_frame, encode_frame_with_features, take_frame, take_frame_features, Frame, FEATURES,
+    encode_frame, encode_frame_with_features, take_frame, take_frame_features, Frame, FEATURES, FEATURE_CLOCK,
 };
 use sanctum_core::session::{Event, Session};
 use sanctum_core::video::{Backlog, FrameInfo};
@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::timeout;
@@ -678,6 +678,10 @@ impl Node {
             session.on_link_up(peer)?
         };
         self.send_paced(conn, peer, first).await?;
+        if features & FEATURE_CLOCK != 0 {
+            let ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            write_frames(conn, &[Frame::Clock { ms }]).await?;
+        }
         self.emit_session_events();
         // Frames may have arrived together with the handshake.
         self.handle_buffered(conn, buf, peer).await?;
@@ -750,6 +754,11 @@ impl Node {
                     // E.g. a keyframe request to answer.
                     self.flush_media();
                 }
+                continue;
+            }
+            // How far their clock is off: for judging call invites.
+            if let Frame::Clock { ms } = frame {
+                self.media.heard_clock(peer, ms);
                 continue;
             }
             let out = self.session.lock().unwrap().on_frame(peer, frame)?;
@@ -1567,6 +1576,22 @@ mod tests {
             session.lock().unwrap().store.messages(ab, None).unwrap().iter().any(|m| m.body == "still there?")
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn linked_phones_learn_how_far_each_others_clocks_are() {
+        let book = Arc::default();
+        let (mut alice, bob) = (phone(&book).await, phone(&book).await);
+        befriend(&alice, &bob).await;
+        alice.node.poke(bob.pk);
+        expect(&mut alice.events, |e| *e == NetEvent::PeerConnected(bob.pk)).await;
+        let (a, b) = (alice.session.lock().unwrap().media(), bob.session.lock().unwrap().media());
+        let (ap, bp) = (alice.pk, bob.pk);
+        until(move || a.clock_ahead(&bp).is_some() && b.clock_ahead(&ap).is_some()).await;
+        // Same machine, same clock: no more than the trip apart.
+        let ahead = alice.session.lock().unwrap().media().clock_ahead(&bob.pk).unwrap();
+        assert!(ahead.abs() < 2_000, "{ahead}");
+        assert_eq!(alice.node.connected(), [bob.pk], "the link stays up");
     }
 
     fn call_caps() -> sanctum_core::call::CallCaps {
