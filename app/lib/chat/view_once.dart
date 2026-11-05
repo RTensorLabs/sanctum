@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../background/background.dart';
@@ -10,6 +9,7 @@ import '../security/screenshots.dart';
 import '../src/rust/api/chat_extras.dart';
 import '../src/rust/api/store.dart';
 import '../theme/tokens.dart';
+import 'media.dart';
 
 /// Opens a friend's photo or video that can be seen once. It's gone from
 /// both phones as soon as it opens; screenshots are blocked while it shows,
@@ -75,13 +75,18 @@ class _OnceScreenState extends State<_OnceScreen> {
     if (widget.video) _play();
   }
 
-  /// A video plays from a copy in the app's own cache, deleted on close.
+  /// A video plays from a copy with the app's other plain copies, deleted
+  /// on close (and, if the app is stopped first, at the next start).
   Future<void> _play() async {
     VideoPlayerController? player;
     try {
-      final dir = await getApplicationCacheDirectory();
-      final file = File('${dir.path}/once-${DateTime.now().microsecondsSinceEpoch}');
+      final file = await decryptedCopyFile('once-${DateTime.now().microsecondsSinceEpoch}');
       await file.writeAsBytes(widget.bytes, flush: true);
+      if (!mounted) {
+        // Closed while it was being written.
+        await file.delete();
+        return;
+      }
       _file = file;
       player = VideoPlayerController.file(file);
       await player.initialize().timeout(const Duration(seconds: 20));

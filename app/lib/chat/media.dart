@@ -46,12 +46,38 @@ Future<Directory> _openDir() async => Directory('${(await getApplicationCacheDir
 /// cancelled or cut short leaves its copy behind.
 Future<Directory> _outgoingDir() async => Directory('${(await getApplicationCacheDirectory()).path}/outgoing');
 
-/// Deletes every leftover plain copy (opened attachments, picked files that
-/// were never sent). Run at every start.
+/// A file for a decrypted copy that must not outlive its use (an open-once
+/// video while it plays). It lives with the other plain copies, which every
+/// start and the emergency wipe delete.
+Future<File> decryptedCopyFile(String name) async {
+  final dir = await _openDir();
+  await dir.create(recursive: true);
+  return File('${dir.path}/$name');
+}
+
+/// Open-once videos that older versions played from the cache folder itself.
+List<File> legacyOnceCopies(String cacheDir) {
+  try {
+    return [
+      for (final f in Directory(cacheDir).listSync())
+        if (f is File && f.uri.pathSegments.last.startsWith('once-')) f
+    ];
+  } catch (_) {
+    return const [];
+  }
+}
+
+/// Deletes every leftover plain copy (opened attachments, open-once videos,
+/// picked files that were never sent). Run at every start.
 Future<void> clearDecryptedCopies() async {
   for (final dir in [await _openDir(), await _outgoingDir()]) {
     try {
       if (dir.existsSync()) dir.deleteSync(recursive: true);
+    } catch (_) {}
+  }
+  for (final f in legacyOnceCopies((await getApplicationCacheDirectory()).path)) {
+    try {
+      f.deleteSync();
     } catch (_) {}
   }
 }
