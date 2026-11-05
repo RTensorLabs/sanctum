@@ -3,27 +3,48 @@ name: Android APK
 on:
   push:
     branches: [main]
-    # The website publishes on its own (pages.yml); it isn't an app update.
-    paths-ignore: ["website/**", ".github/workflows/pages.yml"]
+    # Only app changes make a release. The website publishes on its own
+    # (pages.yml), and documentation isn't an app update. Skipped commits
+    # roll into the next build's changelog.
+    paths-ignore:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
 
+# Read-only by default; only the publish job can write (make the release).
 permissions:
-  contents: write
+  contents: read
 
 # One release at a time, in order: each build's changelog starts from the
-# previous build's tag, so that tag must exist first.
+# previous build's tag, so that tag must exist first. A running build is
+# never cancelled; of several pushes waiting behind it, only the newest runs.
 concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  # SHA-256 of the release signing certificate. Every release must be signed
+  # with this key, or Android refuses to install it over the existing app.
+  RELEASE_CERT_SHA256: c83a4a2d80e5577e9f9fb27e8db6dd65280ec4e8ebaa782ba65067fbefa4168e
+
 jobs:
+  # Builds and tests with a read-only token. Third-party build code (Dart
+  # packages, Gradle plugins, Rust crates) runs here, so it never sees a
+  # token that can publish, and sees the signing key only for the final build.
   build:
     runs-on: ubuntu-latest
+    outputs:
+      number: ${{ steps.number.outputs.n }}
+      version: ${{ steps.version.outputs.name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # History and tags, for the changelog.
           fetch-depth: 0
+          # Don't leave the token in .git/config for build code to read.
+          persist-credentials: false
 
       # Build N is the last published build plus one, so a build that was
       # cancelled or failed doesn't leave a gap in the numbers.
@@ -34,79 +55,129 @@ jobs:
           last=$(git tag --list 'build-*' | sed 's/^build-//' | grep -E '^[0-9]+$' | sort -n | tail -1)
           echo "n=$(( ${last:-0} + 1 ))" >> "$GITHUB_OUTPUT"
 
-      - name: Rust tests
-        run: |
-          cargo test --workspace
-          cargo build -p rust_lib_sanctum
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.47.7"
-          channel: stable
-
-      - name: Release signing key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::warning::No signing key secrets; this APK is signed with a throwaway debug key."
-            exit 0
-          fi
-          echo "$KEYSTORE_BASE64" | base64 -d > app/android/release.jks
-          printf 'storeFile=release.jks\nalias=sanctum\npassword=%s\n' "$KEYSTORE_PASSWORD" > app/android/key.properties
-
-      - name: Analyze and build
-        working-directory: app
-        run: |
-          flutter pub get
-          flutter analyze
-          flutter test
-          flutter build apk --release --target-platform android-arm64 --build-number=${{ steps.number.outputs.n }}
-
-      - name: Verify signature
-        run: |
-          [ -f app/android/key.properties ] || exit 0
-          APKSIGNER=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)apksigner
-          $APKSIGNER verify --print-certs app/build/app/outputs/flutter-apk/app-release.apk | grep -i "SHA-256"
-
-      - name: Remove signing key
-        if: always()
-        run: rm -f app/android/release.jks app/android/key.properties
-
       - name: Changelog
-        run: |
-          # Tags made by releases since this run checked out.
-          git fetch --tags --force --quiet
-          python3 .github/scripts/changelog.py ${{ steps.number.outputs.n }} changelog.md release-notes.md
+        run: python3 .github/scripts/changelog.py ${{ steps.number.outputs.n }} changelog.md release-notes.md
 
       - name: Version
         id: version
         run: echo "name=$(sed -n "s/^const appVersion = '\(.*\)';/\1/p" app/lib/version.dart)" >> "$GITHUB_OUTPUT"
 
-      - name: Website download
-        run: cp app/build/app/outputs/flutter-apk/app-release.apk sanctum.apk
+      - name: Rust tests
+        run: |
+          cargo test --workspace --locked
+          cargo build -p rust_lib_sanctum --locked
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: "3.47.7"
+          channel: stable
+
+      - name: Analyze and test
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+
+      # Releases come only from main, and only signed with the release key:
+      # without it the build fails rather than publish an APK that installed
+      # apps can't update to. Other branches build with the debug key and
+      # never publish.
+      - name: Release signing key
+        if: github.ref == 'refs/heads/main'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::The signing key secrets are missing; refusing to build a release."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > app/android/release.jks
+          printf 'storeFile=release.jks\nalias=sanctum\npassword=%s\n' "$KEYSTORE_PASSWORD" > app/android/key.properties
+
+      - name: Build
+        working-directory: app
+        env:
+          # Gradle refuses to fall back to the debug key on main.
+          SANCTUM_REQUIRE_RELEASE_KEY: ${{ github.ref == 'refs/heads/main' && '1' || '' }}
+        run: flutter build apk --release --target-platform android-arm64 --build-number=${{ steps.number.outputs.n }}
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f app/android/release.jks app/android/key.properties
+
+      - name: Verify signature
+        if: github.ref == 'refs/heads/main'
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          certs=$("$APKSIGNER" verify --print-certs app/build/app/outputs/flutter-apk/app-release.apk)
+          echo "$certs" | grep -i "SHA-256"
+          found=$(echo "$certs" | sed -n 's/.*certificate SHA-256 digest: *\([0-9a-fA-F]*\).*/\1/p' | tr 'A-F' 'a-f' | sort -u)
+          if [ "$found" != "$RELEASE_CERT_SHA256" ]; then
+            echo "::error::The APK isn't signed with the release key (found: ${found:-none})."
+            exit 1
+          fi
+
+      - name: Collect release files
+        run: |
+          mkdir release
+          cp app/build/app/outputs/flutter-apk/app-release.apk changelog.md release-notes.md release/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Publishes what the build job made. Only this job can write to the
+  # repository, and it runs no build code: it checks the signature again and
+  # makes the release.
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release
+          path: release
+
+      - name: Verify signature
+        working-directory: release
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          certs=$("$APKSIGNER" verify --print-certs app-release.apk)
+          found=$(echo "$certs" | sed -n 's/.*certificate SHA-256 digest: *\([0-9a-fA-F]*\).*/\1/p' | tr 'A-F' 'a-f' | sort -u)
+          if [ "$found" != "$RELEASE_CERT_SHA256" ]; then
+            echo "::error::The APK isn't signed with the release key (found: ${found:-none})."
+            exit 1
+          fi
+          # sanctum.apk is what people download from the website.
+          cp app-release.apk sanctum.apk
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: build-${{ steps.number.outputs.n }}
+          tag_name: build-${{ needs.build.outputs.number }}
           # The tag stays build-N: installed apps look for it to update.
-          name: Sanctum ${{ steps.version.outputs.name }}.${{ steps.number.outputs.n }}
+          name: Sanctum ${{ needs.build.outputs.version }}.${{ needs.build.outputs.number }}
           # Tag the commit that was built, not whatever main is by now.
           target_commitish: ${{ github.sha }}
           make_latest: true
-          body_path: release-notes.md
-          # sanctum.apk is what people download from the website.
-          # app-release.apk (the same file) is what installed apps look for
-          # to update, so it stays. The app reads changelog.md to show
-          # what's new before updating.
+          body_path: release/release-notes.md
+          # app-release.apk (the same file as sanctum.apk) is what installed
+          # apps look for to update, so it stays. The app reads changelog.md
+          # to show what's new before updating.
           files: |
-            app/build/app/outputs/flutter-apk/app-release.apk
-            sanctum.apk
-            changelog.md
+            release/app-release.apk
+            release/sanctum.apk
+            release/changelog.md

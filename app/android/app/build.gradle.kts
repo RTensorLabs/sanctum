@@ -52,8 +52,14 @@ android {
         release {
             // Every release must be signed with the same key, or Android
             // refuses to install the update over the existing app. Without
-            // key.properties (local builds) fall back to the debug key.
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // key.properties (local builds) fall back to the debug key,
+            // except where CI builds a release to publish: there it's an error.
+            signingConfig = signingConfigs.findByName("release")
+                ?: if (System.getenv("SANCTUM_REQUIRE_RELEASE_KEY") == "1") {
+                    throw GradleException("No release signing key (key.properties); refusing to sign a release with the debug key.")
+                } else {
+                    signingConfigs.getByName("debug")
+                }
         }
     }
 }
