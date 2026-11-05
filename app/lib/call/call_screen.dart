@@ -113,7 +113,14 @@ class _CallLayerState extends State<CallLayer> {
             builder: (context, snap) => ValueListenableBuilder<bool>(
               valueListenable: AppLock.locked,
               builder: (context, locked, _) => _small
-                  ? _CallBar(info: c, accent: callAccent(snap.data), onTap: () => setState(() => _small = false))
+                  ? _CallBar(
+                      info: c,
+                      // Over the lock screen, or for a hidden chat, the bar
+                      // doesn't say who either (not even by colour).
+                      anonymous: locked || c.hidden,
+                      accent: callAccent(locked || c.hidden ? null : snap.data),
+                      onTap: () => setState(() => _small = false),
+                    )
                   : CallScreen(
                       info: c,
                       sigil: snap.data,
@@ -702,9 +709,12 @@ class _IconTap extends StatelessWidget {
 
 /// The call, shrunk to a bar at the top while using the app.
 class _CallBar extends StatefulWidget {
-  const _CallBar({required this.info, required this.accent, required this.onTap});
+  const _CallBar({required this.info, required this.anonymous, required this.accent, required this.onTap});
 
   final CallInfo info;
+
+  /// Don't say who it is (locked, or a hidden chat).
+  final bool anonymous;
   final Color accent;
   final VoidCallback onTap;
 
@@ -724,7 +734,7 @@ class _CallBarState extends State<_CallBar> {
   @override
   Widget build(BuildContext context) {
     final c = widget.info;
-    final name = c.hidden ? 'Sanctum' : c.name;
+    final name = widget.anonymous ? 'Sanctum' : c.name;
     final answered = c.answeredAtMs;
     final talked = answered == null
         ? Duration.zero
