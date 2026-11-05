@@ -15,7 +15,7 @@
 //! notifies.
 
 use crate::protocol::{Content, MediaKind, MessageId};
-use crate::session::{clip, now, Event, Result, Session, SessionError};
+use crate::session::{clip, kept_time, not_ahead, now, Event, Result, Session, SessionError};
 use crate::store::{ChatKind, StoredMessage};
 use serde::{Deserialize, Serialize};
 
@@ -69,7 +69,7 @@ fn tidy(m: &StoredMessage, body: &str) -> Option<String> {
 /// Puts the edit on the message if it's newer than the last. True if the
 /// message changed (and must be saved).
 fn apply(m: &mut StoredMessage, body: String, at: u64) -> bool {
-    if at <= m.edited_at || !editable(m) {
+    if at <= kept_time(m.edited_at) || !editable(m) {
         return false;
     }
     let Some(body) = tidy(m, &body) else {
@@ -102,7 +102,7 @@ impl Session {
         let Some(id) = msg.id else {
             return Err(SessionError::Protocol);
         };
-        let at = now_ms().max(msg.edited_at + 1);
+        let at = now_ms().max(kept_time(msg.edited_at).saturating_add(1));
         msg.body = body.clone();
         msg.edited_at = at;
         self.store.update_message(chat_id, seq, &msg)?;
@@ -114,6 +114,7 @@ impl Session {
     /// came inside the chat's MLS group, from them). Only their own
     /// messages.
     pub(crate) fn on_edit(&mut self, chat_id: i64, peer: &[u8; 32], id: MessageId, body: String, at: u64) -> Result<()> {
+        let at = not_ahead(at);
         match self.store.message_by_id(chat_id, &id)? {
             Some((seq, mut msg)) => {
                 if !msg.from_me && msg.sender == Some(*peer) && apply(&mut msg, body, at) {

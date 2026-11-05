@@ -39,6 +39,11 @@ pub enum MlsError {
     ImpostorCredential,
     #[error("not a member of this group")]
     NotAMember,
+    /// A membership change from someone who may not make one (only the
+    /// group's leader may). Nothing was changed: not even a key was used up, so the same message can
+    /// still be taken later if its sender turns out to be allowed.
+    #[error("membership change refused")]
+    Refused,
     #[error("storage: {0}")]
     Store(#[from] StoreError),
 }
@@ -127,6 +132,12 @@ impl MlsClient {
     /// Writes any state changed since the last call into the encrypted store.
     /// Call after every operation; until then, changes exist only in memory.
     pub fn persist(&mut self, store: &Store) -> Result<()> {
+        self.persist_with::<()>(store, None)
+    }
+
+    /// Like [`persist`](Self::persist), saving `put` in the store's small
+    /// values in the same step (see [`Store::mls_apply_with`]).
+    pub fn persist_with<T: serde::Serialize>(&mut self, store: &Store, put: Option<(&[u8], &T)>) -> Result<()> {
         // Only what changed is copied: a big group's state is large, and
         // this runs after every message.
         let (upserts, deletes) = {
@@ -140,12 +151,12 @@ impl MlsClient {
                 self.persisted.keys().filter(|k| !current.contains_key(*k)).cloned().collect();
             (upserts, deletes)
         };
-        if upserts.is_empty() && deletes.is_empty() {
+        if upserts.is_empty() && deletes.is_empty() && put.is_none() {
             return Ok(());
         }
         let up: Vec<(&[u8], &[u8])> = upserts.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect();
         let del: Vec<&[u8]> = deletes.iter().map(Vec::as_slice).collect();
-        store.mls_apply(&up, &del)?;
+        store.mls_apply_with(&up, &del, put)?;
         for k in &deletes {
             self.persisted.remove(k);
         }
@@ -198,6 +209,8 @@ impl MlsClient {
         check_identity(leaf.credential(), leaf.signature_key().as_slice())?;
 
         let mut group = self.group(group_id)?;
+        // Our change carries only what we chose (see `receive`).
+        group.clear_pending_proposals(self.provider.storage()).map_err(protocol)?;
         let (commit, welcome, _) = group
             .add_members(&self.provider, &self.signer, &[kp])
             .map_err(protocol)?;
@@ -254,16 +267,36 @@ impl MlsClient {
     }
 
     /// Decrypts an application message or applies a membership change.
-    pub fn receive(&self, group_id: &[u8], bytes: &[u8]) -> Result<Received> {
+    ///
+    /// Only `committer` may change who is in the group: a change from
+    /// anyone else (or with no `committer`, from anyone at all, as in a
+    /// friends' pair) is refused before it's applied, and so is every
+    /// proposal (none of our phones send them; stored, the next change we
+    /// make would carry them along). A refused message leaves the group's
+    /// state exactly as it was.
+    pub fn receive(&self, group_id: &[u8], bytes: &[u8], committer: Option<&[u8; 32]>) -> Result<Received> {
         let mut group = self.group(group_id)?;
         let message = MlsMessageIn::tls_deserialize_exact(bytes)
             .map_err(protocol)?
             .try_into_protocol_message()
             .map_err(protocol)?;
+        // Reading a membership change uses up a key even if we then refuse
+        // it, so the state from before is kept to put back. (Changes are
+        // rare; messages, the common case, don't need this.)
+        let before = message
+            .is_handshake_message()
+            .then(|| self.provider.storage.values.read().unwrap().clone());
+        let restore = |error: MlsError| {
+            if let Some(before) = &before {
+                *self.provider.storage.values.write().unwrap() = before.clone();
+            }
+            Err(error)
+        };
         let processed = group
             .process_message(&self.provider, message)
             .map_err(protocol)?;
         let sender_credential = processed.credential().clone();
+        let from_member = matches!(processed.sender(), Sender::Member(_));
         match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(app) => {
                 let sender = identity_of(&sender_credential)?;
@@ -273,6 +306,10 @@ impl MlsClient {
                 })
             }
             ProcessedMessageContent::StagedCommitMessage(commit) => {
+                let by = identity_of(&sender_credential).ok();
+                if !from_member || by.is_none() || by.as_ref() != committer {
+                    return restore(MlsError::Refused);
+                }
                 group
                     .merge_staged_commit(&self.provider, *commit)
                     .map_err(protocol)?;
@@ -282,11 +319,9 @@ impl MlsClient {
                 check_members(&group)?;
                 Ok(Received::MembersChanged)
             }
-            ProcessedMessageContent::ProposalMessage(proposal) => {
-                group
-                    .store_pending_proposal(self.provider.storage(), *proposal)
-                    .map_err(protocol)?;
-                Ok(Received::MembersChanged)
+            // Never sent by our phones: refused for good.
+            ProcessedMessageContent::ProposalMessage(_) => {
+                restore(MlsError::Protocol("proposals are not accepted".into()))
             }
             other => Err(MlsError::Protocol(format!("unexpected message: {other:?}"))),
         }
@@ -300,6 +335,7 @@ impl MlsClient {
             .find(|m| m.signature_key == member)
             .ok_or(MlsError::NotAMember)?
             .index;
+        group.clear_pending_proposals(self.provider.storage()).map_err(protocol)?;
         let (commit, _, _) = group
             .remove_members(&self.provider, &self.signer, &[index])
             .map_err(protocol)?;
@@ -412,7 +448,12 @@ mod tests {
         }
 
         fn recv(&mut self, group: &[u8], ct: &[u8]) -> Received {
-            let r = self.mls.receive(group, ct).unwrap();
+            self.recv_led(group, ct, None)
+        }
+
+        /// Receives in a group led by `leader` (who alone may change it).
+        fn recv_led(&mut self, group: &[u8], ct: &[u8], leader: Option<&Device>) -> Received {
+            let r = self.mls.receive(group, ct, leader.map(|l| l.identity.public_key()).as_ref()).unwrap();
             self.save();
             r
         }
@@ -477,7 +518,7 @@ mod tests {
         // Bob receives but "crashes" before persisting: on reload he still
         // has the pre-message state and can process the message again.
         let ct = alice.mls.encrypt(&group, b"x").unwrap();
-        bob.mls.receive(&group, &ct).unwrap();
+        bob.mls.receive(&group, &ct, None).unwrap();
         bob.mls = MlsClient::load(&bob.identity, &bob.store).unwrap();
         assert_eq!(bob.recv(&group, &ct), msg(&alice, "x"));
     }
@@ -490,7 +531,7 @@ mod tests {
         carol.save();
         let invite = alice.mls.invite(&group, &kp).unwrap();
         alice.save();
-        assert_eq!(bob.recv(&group, &invite.commit), Received::MembersChanged);
+        assert_eq!(bob.recv_led(&group, &invite.commit, Some(&alice)), Received::MembersChanged);
         carol.mls.join(&invite.welcome).unwrap();
         carol.restart();
 
@@ -501,12 +542,123 @@ mod tests {
         // Carol is removed and can no longer read the group.
         let commit = alice.mls.remove(&group, &carol.pk()).unwrap();
         alice.save();
-        assert_eq!(bob.recv(&group, &commit), Received::MembersChanged);
-        assert_eq!(carol.recv(&group, &commit), Received::Removed);
+        assert_eq!(bob.recv_led(&group, &commit, Some(&alice)), Received::MembersChanged);
+        assert_eq!(carol.recv_led(&group, &commit, Some(&alice)), Received::Removed);
         let ct = alice.send(&group, "carol is gone");
         assert_eq!(bob.recv(&group, &ct), msg(&alice, "carol is gone"));
-        assert!(carol.mls.receive(&group, &ct).is_err());
+        assert!(carol.mls.receive(&group, &ct, None).is_err());
         assert_eq!(alice.mls.members(&group).unwrap().len(), 2);
+    }
+
+    /// Alice leads a group with Bob and Carol in it.
+    fn trio() -> (Device, Device, Device, Vec<u8>) {
+        let (mut alice, mut bob, group) = pair();
+        let mut carol = Device::new();
+        let kp = carol.mls.key_package().unwrap();
+        carol.save();
+        let invite = alice.mls.invite(&group, &kp).unwrap();
+        alice.save();
+        assert_eq!(bob.recv_led(&group, &invite.commit, Some(&alice)), Received::MembersChanged);
+        carol.mls.join(&invite.welcome).unwrap();
+        carol.save();
+        (alice, bob, carol, group)
+    }
+
+    fn sorted(mut v: Vec<[u8; 32]>) -> Vec<[u8; 32]> {
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn only_the_leader_changes_who_is_in_a_group() {
+        let (mut alice, mut bob, mut carol, group) = trio();
+        let members = sorted(alice.mls.members(&group).unwrap());
+        let epoch = carol.mls.epoch(&group).unwrap();
+
+        // Bob (a member, not the leader) removes Alice and adds Eve.
+        let removal = bob.mls.remove(&group, &alice.pk()).unwrap();
+        let mut eve = Device::new();
+        let kp = eve.mls.key_package().unwrap();
+        eve.save();
+        assert!(matches!(carol.mls.receive(&group, &removal, Some(&alice.pk())), Err(MlsError::Refused)));
+        // Without a leader (a friends' pair), nobody may change anything.
+        assert!(matches!(carol.mls.receive(&group, &removal, None), Err(MlsError::Refused)));
+        assert!(matches!(alice.mls.receive(&group, &removal, Some(&alice.pk())), Err(MlsError::Refused)));
+        for who in [&mut carol, &mut alice] {
+            who.restart();
+            assert_eq!(sorted(who.mls.members(&group).unwrap()), members);
+            assert_eq!(who.mls.epoch(&group).unwrap(), epoch);
+        }
+        // An outsider added by Bob is refused too.
+        bob.mls = MlsClient::load(&bob.identity, &bob.store).unwrap();
+        let add = bob.mls.invite(&group, &kp).unwrap();
+        assert!(matches!(carol.mls.receive(&group, &add.commit, Some(&alice.pk())), Err(MlsError::Refused)));
+        assert!(eve.mls.join(&add.welcome).is_ok(), "Eve's own copy is all she gets");
+
+        // The leader's changes still count, and the group still works.
+        let ct = alice.send(&group, "still here");
+        assert_eq!(carol.recv(&group, &ct), msg(&alice, "still here"));
+        let mut dave = Device::new();
+        let kp = dave.mls.key_package().unwrap();
+        dave.save();
+        let invite = alice.mls.invite(&group, &kp).unwrap();
+        alice.save();
+        assert_eq!(carol.recv_led(&group, &invite.commit, Some(&alice)), Received::MembersChanged);
+        assert_eq!(carol.mls.members(&group).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn a_refused_change_can_still_be_taken_once_its_sender_may_make_it() {
+        // A new leader's change can arrive before word that they lead.
+        let (mut alice, mut bob, mut carol, group) = trio();
+        let commit = bob.mls.remove(&group, &carol.pk()).unwrap();
+        bob.save();
+        assert!(matches!(alice.mls.receive(&group, &commit, Some(&alice.pk())), Err(MlsError::Refused)));
+        alice.restart();
+        assert_eq!(alice.recv_led(&group, &commit, Some(&bob)), Received::MembersChanged);
+        assert_eq!(alice.mls.members(&group).unwrap().len(), 2);
+        let ct = bob.send(&group, "just us");
+        assert_eq!(alice.recv(&group, &ct), msg(&bob, "just us"));
+        let _ = &mut carol;
+    }
+
+    #[test]
+    fn proposals_are_refused_and_never_ride_along() {
+        let (mut alice, mut bob, carol, group) = trio();
+        // Bob proposes removing Carol, hoping Alice's next change carries it.
+        let carol_index = {
+            let g = bob.mls.group(&group).unwrap();
+            let index = g.members().find(|m| m.signature_key == carol.pk()).unwrap().index;
+            index
+        };
+        let proposal = {
+            let mut g = bob.mls.group(&group).unwrap();
+            let (out, _) = g.propose_remove_member(&bob.mls.provider, &bob.mls.signer, carol_index).unwrap();
+            out.to_bytes().unwrap()
+        };
+        bob.save();
+        assert!(matches!(alice.mls.receive(&group, &proposal, Some(&alice.pk())), Err(MlsError::Protocol(_))));
+        alice.save();
+        // An older build kept such proposals: Alice's phone did, then updated.
+        {
+            let mut g = alice.mls.group(&group).unwrap();
+            let message = MlsMessageIn::tls_deserialize_exact(&proposal).unwrap().try_into_protocol_message().unwrap();
+            let ProcessedMessageContent::ProposalMessage(p) =
+                g.process_message(&alice.mls.provider, message).unwrap().into_content()
+            else {
+                panic!("a proposal");
+            };
+            g.store_pending_proposal(alice.mls.provider.storage(), *p).unwrap();
+            assert!(g.has_pending_proposals());
+        }
+        alice.restart();
+        // Alice adds Dave: Carol stays.
+        let mut dave = Device::new();
+        let kp = dave.mls.key_package().unwrap();
+        dave.save();
+        alice.mls.invite(&group, &kp).unwrap();
+        let members = alice.mls.members(&group).unwrap();
+        assert!(members.contains(&carol.pk()) && members.contains(&dave.pk()));
     }
 
     #[test]
@@ -529,9 +681,9 @@ mod tests {
         let mut bad = ct.clone();
         let last = bad.len() - 1;
         bad[last] ^= 1;
-        assert!(bob.mls.receive(&group, &bad).is_err());
+        assert!(bob.mls.receive(&group, &bad, None).is_err());
         assert_eq!(bob.recv(&group, &ct), msg(&alice, "original"));
-        assert!(bob.mls.receive(&group, &ct).is_err(), "replay must fail");
+        assert!(bob.mls.receive(&group, &ct, None).is_err(), "replay must fail");
     }
 
     #[test]
@@ -540,8 +692,8 @@ mod tests {
         let mut eve = Device::new();
         let eve_group = eve.mls.create_group().unwrap();
         let ct = alice.mls.encrypt(&group, b"secret").unwrap();
-        assert!(eve.mls.receive(&group, &ct).is_err());
-        assert!(eve.mls.receive(&eve_group, &ct).is_err());
+        assert!(eve.mls.receive(&group, &ct, None).is_err());
+        assert!(eve.mls.receive(&eve_group, &ct, None).is_err());
         eve.save();
     }
 

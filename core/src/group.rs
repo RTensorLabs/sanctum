@@ -22,9 +22,9 @@
 
 use crate::call::now_ms;
 use crate::group_sync::sync_id;
-use crate::mls::Received;
+use crate::mls::{MlsError, Received};
 use crate::protocol::{Content, Frame, GroupInfo, GroupMember, GroupRequest, HistoryItem, MessageId, Quote};
-use crate::session::{clip, now, Event, Result, Session, SessionError};
+use crate::session::{clip, inbox_name, now, Event, Result, Session, SessionError};
 use crate::store::{ChatKind, ChatMeta, OutboxItem, OutboxState, Peer, StoredMessage};
 
 /// Group messages we can't read are retried this many times (the change
@@ -282,6 +282,7 @@ impl Session {
             self.broadcast(&meta, &Content::GroupLeave, None)?
         };
         // Already encrypted, the goodbyes still go out from the outbox.
+        self.forget_scheduled(chat_id)?;
         self.store.delete_chat(chat_id)?;
         if !meta.group_id.is_empty() {
             self.sync_forget(&meta.group_id)?;
@@ -659,18 +660,41 @@ impl Session {
         // Any current member may pass on anyone's message; MLS says whose it
         // is. Someone else may only send their own, as before.
         let member = |s: &Self| s.mls.members(group).is_ok_and(|m| m.contains(peer));
+        // Read before, but taking it in failed: it waited here (under the
+        // hash of its bytes, so any copy of it finds it).
+        let name = inbox_name(&sid);
+        let waiting = self.store.kv_get::<([u8; 32], Vec<u8>)>(&name)?;
+        let read_before = waiting.is_some();
+        let received = match waiting {
+            Some((sender, plaintext)) => Ok(Received::Message { sender, plaintext }),
+            // Only the leader changes who is in the group.
+            None => self.mls.receive(group, bytes, meta.admin.as_ref()),
+        };
         let mut out = Vec::new();
-        match self.mls.receive(group, bytes) {
+        match received {
             Ok(Received::Message { sender, plaintext }) if sender == *peer || member(self) => {
-                self.mls.persist(&self.store)?;
-                self.keep_message(group, bytes)?;
-                if let Some(content) = Content::decode(&plaintext) {
-                    self.deliver_group(chat_id, &mut meta, &sender, content)?;
+                if !read_before {
+                    // Kept with the state that read it (see `inbox_name`).
+                    self.mls.persist_with(&self.store, Some((name.as_slice(), &(sender, &plaintext))))?;
                 }
+                if let Some(content) = Content::decode(&plaintext) {
+                    if self.deliver_group(chat_id, &mut meta, &sender, content).is_err()
+                        && !self.taking_in_failed(sid, &name)?
+                    {
+                        // Not acknowledged: it's taken in when it comes again.
+                        return Ok(Vec::new());
+                    }
+                }
+                self.unreadable.remove(&sid);
+                self.keep_message(group, bytes)?;
+                self.store.kv_delete(&name)?;
                 // It may announce a file this member has.
                 out.extend(self.blob_fetches(peer)?);
             }
-            Ok(Received::Message { .. }) => self.mls.persist(&self.store)?,
+            Ok(Received::Message { .. }) => {
+                self.mls.persist(&self.store)?;
+                self.store.kv_delete(&name)?;
+            }
             Ok(Received::MembersChanged) => {
                 self.mls.persist(&self.store)?;
                 self.keep_message(group, bytes)?;
@@ -684,6 +708,12 @@ impl Session {
                 self.store.update_chat(chat_id, &meta)?;
                 self.events.push(Event::Chat(chat_id));
             }
+            // A change from someone who isn't the leader, as we know it.
+            // Nothing was changed, and it's never acknowledged or counted:
+            // if they've just been made leader and word of it is still on
+            // its way, it's taken when it comes again. (Someone who really
+            // isn't the leader only makes their own phone send it again.)
+            Err(MlsError::Refused) => return Ok(Vec::new()),
             Err(_) if relayed => {
                 self.sync_unreadable(group, bytes)?;
                 return Ok(Vec::new());
@@ -707,6 +737,10 @@ impl Session {
     /// Applies a group message from `sender` (whose it is, by MLS: it may
     /// have been passed on by another member).
     pub(crate) fn deliver_group(&mut self, chat_id: i64, meta: &mut ChatMeta, peer: &[u8; 32], content: Content) -> Result<()> {
+        #[cfg(test)]
+        if self.take_in_fails() {
+            return Err(SessionError::Io("no space left".into()));
+        }
         let me = self.public_key();
         match content {
             Content::GroupText {

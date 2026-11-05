@@ -254,6 +254,34 @@ pub struct StoredMessage {
     pub view_once: u8,
     /// A shared location (`body` holds the words shown).
     pub place: Option<Place>,
+    /// When this phone got it (Unix seconds), for messages we received;
+    /// 0 for ours, and for messages from before this was kept. A message
+    /// can wait a long time on its way, so `sent_at` isn't when it came.
+    pub received_at: u64,
+}
+
+/// The eleventh message format, before the time a message came was kept.
+#[derive(Deserialize)]
+struct StoredMessageV10 {
+    from_me: bool,
+    body: String,
+    sent_at: u64,
+    delivered: bool,
+    id: Option<MessageId>,
+    reply: Option<Quote>,
+    sender: Option<[u8; 32]>,
+    media: Option<Media>,
+    poll: Option<Poll>,
+    votes: Vec<Vote>,
+    album: Option<Album>,
+    reactions: Vec<Reaction>,
+    call: Option<CallLog>,
+    shared_by: Option<[u8; 32]>,
+    notice: bool,
+    edited_at: u64,
+    expires_at: u64,
+    view_once: u8,
+    place: Option<Place>,
 }
 
 /// A chat's disappearing-messages timer, the same on every phone in it.
@@ -794,9 +822,12 @@ impl Store {
         Ok(())
     }
 
+    /// Adds an item, or updates one in place: it keeps its turn (the
+    /// outbox goes out oldest first).
     pub fn outbox_put(&self, id: &[u8; 16], item: &OutboxItem) -> Result<()> {
         self.db.execute(
-            "INSERT OR REPLACE INTO outbox (id, peer, sealed) VALUES (?1, ?2, ?3)",
+            "INSERT INTO outbox (id, peer, sealed) VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET peer = excluded.peer, sealed = excluded.sealed",
             params![
                 id.as_slice(),
                 self.peer_index(&item.peer),
@@ -840,6 +871,28 @@ impl Store {
             }
         }
         Ok(peers)
+    }
+
+    /// Removes an item, but only if it is waiting for `peer`: someone
+    /// else confirming it changes nothing.
+    pub fn outbox_remove_for(&self, id: &[u8; 16], peer: &[u8; 32]) -> Result<Option<OutboxItem>> {
+        let sealed: Option<Vec<u8>> = self
+            .db
+            .query_row(
+                "SELECT sealed FROM outbox WHERE id = ?1 AND peer = ?2",
+                params![id.as_slice(), self.peer_index(peer)],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(sealed) = sealed else {
+            return Ok(None);
+        };
+        let item: OutboxItem = self.open_sealed(&outbox_aad(id), &sealed)?;
+        if item.peer != *peer {
+            return Ok(None);
+        }
+        self.db.execute("DELETE FROM outbox WHERE id = ?1", [id.as_slice()])?;
+        Ok(Some(item))
     }
 
     pub fn outbox_remove(&self, id: &[u8; 16]) -> Result<Option<OutboxItem>> {
@@ -989,6 +1042,30 @@ impl Store {
         // Newest format first; older records end before the newer fields.
         if let Ok(m) = postcard::from_bytes::<StoredMessage>(&plain) {
             return Ok(m);
+        }
+        if let Ok(v10) = postcard::from_bytes::<StoredMessageV10>(&plain) {
+            return Ok(StoredMessage {
+                from_me: v10.from_me,
+                body: v10.body,
+                sent_at: v10.sent_at,
+                delivered: v10.delivered,
+                id: v10.id,
+                reply: v10.reply,
+                sender: v10.sender,
+                media: v10.media,
+                poll: v10.poll,
+                votes: v10.votes,
+                album: v10.album,
+                reactions: v10.reactions,
+                call: v10.call,
+                shared_by: v10.shared_by,
+                notice: v10.notice,
+                edited_at: v10.edited_at,
+                expires_at: v10.expires_at,
+                view_once: v10.view_once,
+                place: v10.place,
+                received_at: 0,
+            });
         }
         if let Ok(v9) = postcard::from_bytes::<StoredMessageV9>(&plain) {
             return Ok(StoredMessage {
@@ -1183,7 +1260,27 @@ impl Store {
 
     /// Writes changed MLS entries and removes deleted ones, atomically.
     pub fn mls_apply(&self, upserts: &[(&[u8], &[u8])], deletes: &[&[u8]]) -> Result<()> {
+        self.mls_apply_with::<()>(upserts, deletes, None)
+    }
+
+    /// Like [`mls_apply`](Self::mls_apply), also putting `put` (as
+    /// [`kv_put`](Self::kv_put) would) in the same step: a message just
+    /// read is kept with the state that read it, so neither is saved
+    /// without the other.
+    pub fn mls_apply_with<T: Serialize>(
+        &self,
+        upserts: &[(&[u8], &[u8])],
+        deletes: &[&[u8]],
+        put: Option<(&[u8], &T)>,
+    ) -> Result<()> {
         let tx = self.db.unchecked_transaction()?;
+        if let Some((name, value)) = put {
+            let hashed = self.kv_index(name);
+            tx.execute(
+                "INSERT INTO kv (k, sealed) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET sealed = excluded.sealed",
+                params![hashed, self.seal(&kv_aad(&hashed), value)?],
+            )?;
+        }
         for (k, v) in upserts {
             let hashed = self.mls_index(k);
             tx.execute(
@@ -1549,6 +1646,70 @@ mod tests {
         new.expires_at = 5;
         new.view_once = 2;
         new.place = Some(Place { lat: 12.97, lon: 77.59 });
+        s.update_message(chat, 0, &new).unwrap();
+        assert_eq!(s.message(chat, 0).unwrap().unwrap(), new);
+    }
+
+    #[test]
+    fn messages_from_before_arrival_times_upgrade() {
+        #[derive(Serialize)]
+        struct V10 {
+            from_me: bool,
+            body: String,
+            sent_at: u64,
+            delivered: bool,
+            id: Option<MessageId>,
+            reply: Option<Quote>,
+            sender: Option<[u8; 32]>,
+            media: Option<Media>,
+            poll: Option<Poll>,
+            votes: Vec<Vote>,
+            album: Option<Album>,
+            reactions: Vec<Reaction>,
+            call: Option<CallLog>,
+            shared_by: Option<[u8; 32]>,
+            notice: bool,
+            edited_at: u64,
+            expires_at: u64,
+            view_once: u8,
+            place: Option<Place>,
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("s.db"), &[7; 32]).unwrap();
+        let chat = s.create_chat(&meta("Bob")).unwrap();
+        let old = V10 {
+            from_me: false,
+            body: "before".into(),
+            sent_at: 4,
+            delivered: true,
+            id: Some([3; 16]),
+            reply: None,
+            sender: Some([2; 32]),
+            media: None,
+            poll: None,
+            votes: Vec::new(),
+            album: None,
+            reactions: Vec::new(),
+            call: None,
+            shared_by: None,
+            notice: false,
+            edited_at: 9,
+            expires_at: 5,
+            view_once: 1,
+            place: Some(Place { lat: 1.5, lon: 2.5 }),
+        };
+        s.db.execute(
+            "INSERT INTO messages (chat_id, seq, sealed) VALUES (?1, 0, ?2)",
+            params![chat, s.seal(&message_aad(chat, 0), &old).unwrap()],
+        )
+        .unwrap();
+        let m = s.message(chat, 0).unwrap().unwrap();
+        assert_eq!(
+            (m.body.as_str(), m.edited_at, m.expires_at, m.view_once, m.place, m.received_at),
+            ("before", 9, 5, 1, Some(Place { lat: 1.5, lon: 2.5 }), 0)
+        );
+        let mut new = m.clone();
+        new.received_at = 77;
         s.update_message(chat, 0, &new).unwrap();
         assert_eq!(s.message(chat, 0).unwrap().unwrap(), new);
     }
@@ -1990,6 +2151,26 @@ mod tests {
         assert!(s.messages(chat, None).unwrap()[0].delivered);
         assert!(s.outbox_for(&peer).unwrap().is_empty());
         assert!(s.outbox_remove(&pending[0].0).unwrap().is_none());
+    }
+
+    #[test]
+    fn updating_an_outbox_item_keeps_its_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("s.db"), &[6; 32]).unwrap();
+        let peer = [1u8; 32];
+        let item = |b: u8| OutboxItem { peer, state: OutboxState::Plain(vec![b]), message: None };
+        for id in [3u8, 1, 2] {
+            s.outbox_put(&[id; 16], &item(id)).unwrap();
+        }
+        // The first one is encrypted (updated) after the others were queued.
+        s.outbox_put(
+            &[3; 16],
+            &OutboxItem { peer, state: OutboxState::Sealed { plain: vec![3], cipher: vec![9] }, message: None },
+        )
+        .unwrap();
+        let order: Vec<u8> = s.outbox_for(&peer).unwrap().into_iter().map(|(id, _)| id[0]).collect();
+        assert_eq!(order, [3, 1, 2]);
+        assert!(matches!(s.outbox_for(&peer).unwrap()[0].1.state, OutboxState::Sealed { .. }));
     }
 
     #[test]

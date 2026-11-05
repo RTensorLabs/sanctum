@@ -108,6 +108,16 @@ pub struct FriendRequest {
     pub at: u64,
 }
 
+/// A message that was read but couldn't be taken in is tried this many
+/// times (each time it comes again), then dropped.
+const TAKE_IN_TRIES: u8 = 5;
+
+/// Where a message read but not taken in yet waits (by its id; a group
+/// message by the hash of its bytes), sealed like everything stored.
+pub(crate) fn inbox_name(id: &[u8; 16]) -> Vec<u8> {
+    [b"inbox:".as_slice(), id].concat()
+}
+
 /// More pending requests than this and the oldest are dropped.
 const MAX_REQUESTS: usize = 20;
 const MAX_NAME: usize = 64;
@@ -159,6 +169,16 @@ pub struct Session {
     pub(crate) sync: GroupSync,
     /// When the next scheduled message is due (0: not looked yet).
     pub(crate) scheduled_next: u64,
+    /// Scheduled messages that failed to go at their time, by id: how
+    /// often (see `schedule`). Memory only.
+    pub(crate) scheduled_tries: std::collections::HashMap<u64, u8>,
+    /// Tests: this many of the next messages fail to be taken in, as if
+    /// the phone ran out of space.
+    #[cfg(test)]
+    pub(crate) fail_taking_in: u8,
+    /// Tests: this many of the next scheduled sends fail.
+    #[cfg(test)]
+    pub(crate) fail_sending: u8,
 }
 
 impl Session {
@@ -192,6 +212,11 @@ impl Session {
             media: MediaHub::default(),
             sync: GroupSync::default(),
             scheduled_next: 0,
+            scheduled_tries: Default::default(),
+            #[cfg(test)]
+            fail_taking_in: 0,
+            #[cfg(test)]
+            fail_sending: 0,
         })
     }
 
@@ -691,7 +716,7 @@ impl Session {
         let frame = match frame {
             Frame::Ping => return Ok(Vec::new()),
             Frame::Ack { id } => {
-                self.on_ack(id)?;
+                self.on_ack(peer, id)?;
                 return Ok(Vec::new());
             }
             Frame::GroupKeyPackageRequest { .. }
@@ -794,37 +819,71 @@ impl Session {
                 if self.store.is_seen(&id)? {
                     return Ok(vec![Frame::Ack { id }]);
                 }
-                match self.mls.receive(&meta.group_id, &bytes) {
-                    Ok(Received::Message { sender, plaintext }) if sender == *peer => {
-                        self.mls.persist(&self.store)?;
-                        if let Some(content) = Content::decode(&plaintext) {
-                            self.deliver(chat_id, peer, id, content)?;
+                // Read before, but taking it in failed: it waited here.
+                let name = inbox_name(&id);
+                let content = match self.store.kv_get::<Vec<u8>>(&name)? {
+                    Some(plaintext) => Content::decode(&plaintext),
+                    None => match self.mls.receive(&meta.group_id, &bytes, None) {
+                        Ok(Received::Message { sender, plaintext }) if sender == *peer => {
+                            // Kept with the state that read it (which can't
+                            // read it again): if taking it in fails, it's
+                            // taken from here when the friend sends it again.
+                            self.mls.persist_with(&self.store, Some((name.as_slice(), &plaintext)))?;
+                            Content::decode(&plaintext)
                         }
+                        Ok(_) => {
+                            self.mls.persist(&self.store)?;
+                            None
+                        }
+                        // Undecryptable (e.g. stale after a reinstall), or a
+                        // change to the pair (never made after it's set up):
+                        // drop it, and acknowledge so the sender stops retrying.
+                        Err(_) => None,
+                    },
+                };
+                if let Some(content) = content {
+                    if self.deliver(chat_id, peer, id, content).is_err() && !self.taking_in_failed(id, &name)? {
+                        // Not acknowledged: it comes again with the next resend.
+                        return Ok(Vec::new());
                     }
-                    Ok(_) => self.mls.persist(&self.store)?,
-                    // Undecryptable (e.g. stale after a reinstall): drop it,
-                    // and acknowledge so the sender stops retrying.
-                    Err(_) => {}
                 }
+                self.unreadable.remove(&id);
                 self.store.mark_seen(&id)?;
+                self.store.kv_delete(&name)?;
                 Ok(vec![Frame::Ack { id }])
             }
             _ => Err(SessionError::Protocol),
         }
     }
 
+    /// Taking in a message failed after it was read (and kept, see
+    /// [`inbox_name`]). It's tried again when it comes again, a few times;
+    /// then it's dropped. Returns true to drop it now.
+    pub(crate) fn taking_in_failed(&mut self, key: MessageId, name: &[u8]) -> Result<bool> {
+        let tries = self.unreadable.entry(key).or_insert(0);
+        *tries += 1;
+        if *tries < TAKE_IN_TRIES {
+            return Ok(false);
+        }
+        self.unreadable.remove(&key);
+        self.store.kv_delete(name)?;
+        Ok(true)
+    }
+
     /// The friend (or group member) has it. A group message counts as
     /// delivered once every member has it.
-    fn on_ack(&mut self, id: MessageId) -> Result<()> {
+    /// Only what was sent to `peer` counts: nobody can confirm, and so
+    /// stop, what is on its way to someone else.
+    fn on_ack(&mut self, peer: &[u8; 32], id: MessageId) -> Result<()> {
         self.call_delivered(&id);
-        if let Some(item) = self.store.outbox_remove(&id)? {
+        if let Some(item) = self.store.outbox_remove_for(&id, peer)? {
             if let Some((chat, seq)) = item.message {
                 if !self.store.outbox_has_message(chat, seq)? {
                     self.store.set_delivered(chat, seq)?;
                 }
                 self.events.push(Event::Chat(chat));
             }
-        } else if let Some(i) = self.temp_out.iter().position(|o| o.id == id) {
+        } else if let Some(i) = self.temp_out.iter().position(|o| o.id == id && o.peer == *peer) {
             self.temp_out.remove(i);
             if let Some(temp) = self.temp.mark_delivered(&id) {
                 self.events.push(Event::Temp(temp));
@@ -841,6 +900,10 @@ impl Session {
         id: MessageId,
         content: Content,
     ) -> Result<()> {
+        #[cfg(test)]
+        if self.take_in_fails() {
+            return Err(SessionError::Io("no space left".into()));
+        }
         let name = self.friend_name(peer);
         self.purge();
         match content {
@@ -1076,6 +1139,7 @@ impl Session {
             }
         }
         self.forget_chat_prefs(chat_id)?;
+        self.forget_scheduled(chat_id)?;
         self.store.delete_chat(chat_id)?;
         Ok(())
     }
@@ -1192,6 +1256,38 @@ impl Session {
         let mut expected = vec![self.public_key(), *peer];
         expected.sort();
         Ok(members == expected)
+    }
+}
+
+#[cfg(test)]
+impl Session {
+    /// See `fail_taking_in`.
+    pub(crate) fn take_in_fails(&mut self) -> bool {
+        let fail = self.fail_taking_in > 0;
+        self.fail_taking_in = self.fail_taking_in.saturating_sub(1);
+        fail
+    }
+}
+
+/// How far ahead of this phone's clock another phone's "newest wins" time
+/// may be (milliseconds): enough for clocks that are a little off.
+pub(crate) const AHEAD_MS: u64 = 10 * 60 * 1000;
+
+/// Another phone's "newest wins" time (milliseconds: a pin, a timer, an
+/// edit), at most [`AHEAD_MS`] ahead of ours. A time far in the future
+/// would otherwise win over every later change, for good.
+pub(crate) fn not_ahead(at: u64) -> u64 {
+    at.min(now_ms().saturating_add(AHEAD_MS))
+}
+
+/// A "newest wins" time kept here. One further ahead than [`not_ahead`]
+/// allows was kept before that rule: it counts as long ago, so the setting
+/// isn't stuck.
+pub(crate) fn kept_time(at: u64) -> u64 {
+    if at > now_ms().saturating_add(AHEAD_MS) {
+        0
+    } else {
+        at
     }
 }
 
@@ -1369,6 +1465,25 @@ pub(crate) mod tests {
         assert_eq!(alice.texts(ab).len(), 11);
         assert!(alice.texts(ab).iter().all(|m| m.2), "all delivered");
         assert_eq!(bob.texts(ba).iter().filter(|m| !m.0).count(), 5);
+    }
+
+    #[test]
+    fn only_the_friend_a_message_is_for_can_confirm_it() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let mut carol = Phone::new();
+        let (ab, _) = befriend(&mut alice, &mut bob);
+        befriend(&mut alice, &mut carol);
+        connect(&mut alice, &mut bob);
+        connect(&mut alice, &mut carol);
+        alice.s.send_text(ab, "for bob").unwrap();
+        let (id, _) = alice.s.store.outbox_for(&bob.pk()).unwrap().remove(0);
+        // Carol (who somehow learned its id) confirms Bob's message.
+        assert!(alice.s.on_frame(&carol.pk(), Frame::Ack { id }).unwrap().is_empty());
+        assert_eq!(alice.s.store.outbox_for(&bob.pk()).unwrap().len(), 1, "still on its way to Bob");
+        assert_eq!(alice.texts(ab), [(true, "for bob".into(), false)]);
+        connect(&mut alice, &mut bob);
+        assert_eq!(alice.texts(ab), [(true, "for bob".into(), true)]);
+        assert!(alice.s.store.outbox_for(&bob.pk()).unwrap().is_empty());
     }
 
     #[test]
@@ -1765,6 +1880,145 @@ pub(crate) mod tests {
         assert_eq!(names(&carol, cg), ["Bob", "You"]);
     }
 
+    fn members_of(phone: &Phone, chat: i64) -> Vec<[u8; 32]> {
+        let mut m = phone.s.mls.members(&phone.s.chat(chat).unwrap().group_id).unwrap();
+        m.sort();
+        m
+    }
+
+    #[test]
+    fn only_the_leader_changes_who_is_in_a_group() {
+        let (mut alice, mut bob, mut carol, mut dave, group, [_, _, ad, _]) = crew();
+        let cg = group_of(&carol, "Crew").unwrap();
+        let gid = alice.s.chat(group).unwrap().group_id;
+        let before = members_of(&carol, cg);
+        let epoch = carol.s.mls.epoch(&gid).unwrap();
+
+        // Bob, a plain member, removes the leader, then adds Dave, with his
+        // phone's own encryption (as a changed app could).
+        let removal = bob.s.mls.remove(&gid, &alice.pk()).unwrap();
+        bob.restart();
+        let kp = dave.s.mls.key_package().unwrap();
+        dave.s.mls.persist(&dave.s.store).unwrap();
+        let addition = bob.s.mls.invite(&gid, &kp).unwrap().commit;
+        bob.restart();
+        for bytes in [&removal, &addition, &removal] {
+            let id = rand::random();
+            let frame = Frame::GroupMls { group: gid.clone(), id, bytes: bytes.clone() };
+            assert!(carol.s.on_frame(&bob.pk(), frame.clone()).unwrap().is_empty(), "refused, not acknowledged");
+            assert!(alice.s.on_frame(&bob.pk(), frame).unwrap().is_empty());
+        }
+        carol.restart();
+        assert_eq!(members_of(&carol, cg), before);
+        assert_eq!(carol.s.mls.epoch(&gid).unwrap(), epoch);
+        assert_eq!(members_of(&alice, group), before);
+
+        // The group still works, and the leader's own changes count.
+        bob.s.send_to_chat(group_of(&bob, "Crew").unwrap(), "all good?", None).unwrap();
+        connect(&mut bob, &mut carol);
+        assert_eq!(carol.texts(cg).last().unwrap().1, "all good?");
+        alice.s.group_add(group, &[ad], false).unwrap();
+        connect(&mut alice, &mut dave);
+        connect(&mut alice, &mut dave);
+        connect(&mut alice, &mut bob);
+        connect(&mut alice, &mut carol);
+        assert_eq!(names(&carol, cg), ["Alice", "Bob", "Dave", "You"]);
+    }
+
+    #[test]
+    fn a_friend_cant_change_the_encryption_of_your_chat() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let (ab, ba) = befriend(&mut alice, &mut bob);
+        connect(&mut alice, &mut bob);
+        let gid = alice.s.chat(ab).unwrap().group_id;
+        let mut eve = Phone::new();
+        let kp = eve.s.mls.key_package().unwrap();
+        let commit = bob.s.mls.invite(&gid, &kp).unwrap().commit;
+        bob.restart();
+        let id = rand::random();
+        let out = alice.s.on_frame(&bob.pk(), Frame::Mls { id, bytes: commit }).unwrap();
+        assert_eq!(out, vec![Frame::Ack { id }], "dropped, so it isn't sent again");
+        assert_eq!(alice.s.mls.members(&gid).unwrap().len(), 2);
+        bob.s.send_text(ba, "still private").unwrap();
+        connect(&mut bob, &mut alice);
+        assert_eq!(alice.texts(ab).last().unwrap().1, "still private");
+        let _ = &mut eve;
+    }
+
+    #[test]
+    fn a_new_leaders_change_waits_for_word_that_they_lead() {
+        let (mut alice, mut bob, mut carol, mut dave, group, [_, _, _, bd]) = crew();
+        let (bg, cg) = (group_of(&bob, "Crew").unwrap(), group_of(&carol, "Crew").unwrap());
+        alice.s.group_make_admin(group, &bob.pk()).unwrap();
+        connect(&mut alice, &mut bob);
+        connect(&mut alice, &mut carol);
+        alice.s.group_hand_over(group, &bob.pk()).unwrap();
+        connect(&mut alice, &mut bob);
+        // Bob, now leading, adds Dave before Carol has heard from Alice.
+        // (Carol's build doesn't pass messages on, so Bob can't hand her
+        // Alice's word himself.)
+        carol.features = 0;
+        bob.s.group_add(bg, &[bd], false).unwrap();
+        connect(&mut bob, &mut dave);
+        connect(&mut bob, &mut dave);
+        connect(&mut bob, &mut carol);
+        assert_eq!(names(&carol, cg), ["Alice", "Bob", "You"], "not yet: Alice still leads, as far as Carol knows");
+        connect(&mut alice, &mut carol);
+        connect(&mut bob, &mut carol);
+        assert_eq!(names(&carol, cg), ["Alice", "Bob", "Dave", "You"]);
+        assert_eq!(role_of(&carol, cg, bob.pk()), (true, true));
+    }
+
+    #[test]
+    fn a_message_that_fails_to_be_taken_in_is_not_lost() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let (ab, ba) = befriend(&mut alice, &mut bob);
+        connect(&mut alice, &mut bob);
+        alice.s.send_text(ab, "don't lose me").unwrap();
+        // Bob's phone fails to store it (say it's full), then restarts.
+        bob.s.fail_taking_in = 1;
+        connect(&mut alice, &mut bob);
+        assert!(bob.texts(ba).is_empty());
+        assert_eq!(alice.texts(ab), [(true, "don't lose me".into(), false)], "not acknowledged");
+        bob.restart();
+        connect(&mut alice, &mut bob);
+        assert_eq!(bob.texts(ba), [(false, "don't lose me".into(), true)]);
+        assert_eq!(alice.texts(ab), [(true, "don't lose me".into(), true)]);
+        // Once in is once: it isn't taken in again.
+        connect(&mut alice, &mut bob);
+        assert_eq!(bob.texts(ba).len(), 1);
+        // Later messages are read as usual.
+        alice.s.send_text(ab, "and me").unwrap();
+        connect(&mut alice, &mut bob);
+        assert_eq!(bob.texts(ba).len(), 2);
+
+        // One that can never be taken in is dropped after a few tries.
+        alice.s.send_text(ab, "cursed").unwrap();
+        bob.s.fail_taking_in = u8::MAX;
+        for _ in 0..TAKE_IN_TRIES {
+            connect(&mut alice, &mut bob);
+        }
+        bob.s.fail_taking_in = 0;
+        assert!(alice.s.pending_peers().unwrap().is_empty(), "the sender stops trying");
+        assert_eq!(bob.texts(ba).len(), 2);
+    }
+
+    #[test]
+    fn a_group_message_that_fails_to_be_taken_in_is_not_lost() {
+        let (_alice, mut bob, mut carol, _dave, _group, _) = crew();
+        let (bg, cg) = (group_of(&bob, "Crew").unwrap(), group_of(&carol, "Crew").unwrap());
+        let before = carol.texts(cg).len();
+        bob.s.send_to_chat(bg, "group news", None).unwrap();
+        carol.s.fail_taking_in = 1;
+        connect(&mut bob, &mut carol);
+        assert_eq!(carol.texts(cg).len(), before);
+        carol.restart();
+        connect(&mut bob, &mut carol);
+        assert_eq!(carol.texts(cg).last().unwrap().1, "group news");
+        connect(&mut bob, &mut carol);
+        assert_eq!(carol.texts(cg).len(), before + 1);
+    }
+
     #[test]
     fn history_goes_to_new_members_only_if_the_leader_chooses() {
         let (mut alice, mut bob, mut carol, mut dave, group, [_, ac, ad, bd]) = crew();
@@ -2140,6 +2394,37 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn times_from_far_in_the_future_dont_freeze_edits_reactions_or_answers() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let (ab, ba) = befriend(&mut alice, &mut bob);
+        alice.s.send_text(ab, "see you at 7").unwrap();
+        connect(&mut alice, &mut bob);
+        let id = alice.s.store.message(ab, 0).unwrap().unwrap().id.unwrap();
+        // An edit claiming to be from the end of time is kept as only a
+        // little ahead...
+        bob.s.on_edit(ba, &alice.pk(), id, "see you at 8".into(), u64::MAX).unwrap();
+        let m = bob.s.store.message(ba, 0).unwrap().unwrap();
+        assert_eq!(m.body, "see you at 8");
+        assert!(m.edited_at <= crate::call::now_ms() + AHEAD_MS);
+        // ...and one kept before this rule doesn't stop the next edit.
+        let mut m = m;
+        m.edited_at = u64::MAX;
+        bob.s.store.update_message(ba, 0, &m).unwrap();
+        alice.s.edit_message(ab, 0, "see you at 9").unwrap();
+        connect(&mut alice, &mut bob);
+        assert_eq!(bob.s.store.message(ba, 0).unwrap().unwrap().body, "see you at 9");
+        // Our own reaction made when our clock was ahead doesn't block the next.
+        bob.s.react(ba, 0, "👍").unwrap();
+        let mut m = bob.s.store.message(ba, 0).unwrap().unwrap();
+        m.reactions[0].at = crate::call::now_ms() + 60_000;
+        bob.s.store.update_message(ba, 0, &m).unwrap();
+        bob.s.react(ba, 0, "🎉").unwrap();
+        assert_eq!(reactions(&bob, ba, 0), [(bob.pk(), "🎉".to_string())]);
+        connect(&mut bob, &mut alice);
+        assert_eq!(reactions(&alice, ab, 0), [(bob.pk(), "🎉".to_string())]);
+    }
+
+    #[test]
     fn everyone_in_a_group_sees_edits_even_ones_that_come_first() {
         let (mut alice, mut bob, mut carol) = (Phone::new(), Phone::new(), Phone::new());
         let (ab, _) = befriend(&mut alice, &mut bob);
@@ -2172,7 +2457,8 @@ pub(crate) mod tests {
         connect(&mut alice, &mut carol);
         let cseq = carol.s.store.messages_indexed(cg, None).unwrap().last().unwrap().0;
         let m = carol.s.store.message(cg, cseq).unwrap().unwrap();
-        assert_eq!((m.body.as_str(), m.edited_at), ("train at 7", u64::MAX - 1));
+        assert_eq!(m.body, "train at 7");
+        assert!(m.edited_at <= crate::call::now_ms() + AHEAD_MS, "from the future: only a little ahead");
     }
 
     #[test]
@@ -2388,6 +2674,25 @@ pub(crate) mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!((list[0].caption.as_str(), list[0].seconds, list[0].once), ("hi", 0, false));
         assert!(alice.s.store.kv_get::<Vec<crate::moment::Moment>>(b"moments-v2").unwrap().is_some());
+    }
+
+    #[test]
+    fn catch_up_counts_messages_by_when_they_came() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let (ab, _) = befriend(&mut alice, &mut bob);
+        connect(&mut alice, &mut bob);
+        let since = now() - 60;
+        // Written an hour ago, it waited on Bob's phone until now.
+        let written = now() - 3600;
+        let late = Content::Text { body: "sent earlier".into(), sent_at: written };
+        alice.s.deliver(ab, &bob.pk(), rand::random(), late).unwrap();
+        let m = alice.s.store.messages(ab, None).unwrap().pop().unwrap();
+        assert_eq!(m.sent_at, written);
+        assert!(m.received_at >= since);
+        let up = alice.s.catch_up(since, false).unwrap();
+        assert_eq!(up.chats.len(), 1);
+        assert_eq!((up.chats[0].count, up.chats[0].last.as_str()), (1, "sent earlier"));
+        assert!(alice.s.catch_up(now() + 1, false).unwrap().chats.is_empty());
     }
 
     #[test]
