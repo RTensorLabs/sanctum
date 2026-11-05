@@ -204,4 +204,44 @@ void main() {
     expect(tester.takeException(), isNull);
     await holdToWipe(tester, wipes);
   });
+
+  testWidgets('the wait after too many wrong PINs survives closing Sanctum', (tester) async {
+    await tester.runAsync(() => setPin('2468'));
+    addTearDown(() => tester.runAsync(() async {
+          await removePin();
+          await saveSetting('pin_failures', null);
+        }));
+    // Until the PIN check (slow on purpose) is done.
+    Future<void> settle() async {
+      for (var i = 0; i < 200 && (i < 6 || find.text('Unlock').evaluate().isEmpty); i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    await showApp(tester);
+    for (var i = 0; i < 5; i++) {
+      for (final d in ['1', '1', '1', '1']) {
+        await tester.tap(find.text(d));
+      }
+      await tester.pump();
+      await tester.tap(find.text('Unlock'));
+      await settle();
+    }
+    expect(find.text('Too many tries: wait a moment'), findsOneWidget);
+
+    // Closing and opening Sanctum again doesn't reset it.
+    await tester.pumpWidget(const SizedBox());
+    await showApp(tester);
+    await settle();
+    expect(find.text('Too many tries: wait a moment'), findsOneWidget);
+    for (final d in ['2', '4', '6', '8']) {
+      await tester.tap(find.text(d));
+    }
+    await tester.pump();
+    await tester.tap(find.text('Unlock'));
+    await settle();
+    expect(AppLock.locked.value, isTrue, reason: 'even the right PIN waits');
+    await tester.pumpWidget(const SizedBox());
+  });
 }

@@ -140,6 +140,38 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
     } catch (_) {
       // Unreadable storage: keep what the screen shows now.
     }
+    await _loadFailures();
+  }
+
+  /// Wrong PINs are counted on the phone, so closing Sanctum doesn't
+  /// reset the wait: "count:when the last one was entered".
+  static const _failuresKey = 'pin_failures';
+
+  /// After 5 wrong PINs, wait: 30 s, then doubling.
+  static DateTime? _waitAfter(int failures, DateTime last) =>
+      failures >= 5 ? last.add(Duration(seconds: 30 << (failures - 5).clamp(0, 6))) : null;
+
+  Future<void> _loadFailures() async {
+    final saved = (await loadSetting(_failuresKey))?.split(':');
+    final count = int.tryParse(saved?.first ?? '');
+    final at = int.tryParse(saved?.last ?? '');
+    if (count == null || at == null || count <= _failures || !mounted) return;
+    final now = DateTime.now();
+    var last = DateTime.fromMillisecondsSinceEpoch(at);
+    // A clock set back can't stretch the wait.
+    if (last.isAfter(now)) last = now;
+    setState(() {
+      _failures = count;
+      _waitUntil = _waitAfter(count, last);
+    });
+  }
+
+  Future<void> _saveFailures() async {
+    try {
+      await saveSetting(_failuresKey, _failures == 0 ? null : '$_failures:${DateTime.now().millisecondsSinceEpoch}');
+    } catch (_) {
+      // Unwritable storage: the count still holds while Sanctum runs.
+    }
   }
 
   /// Unlocks into the real profile or the decoy.
@@ -171,8 +203,9 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
     setState(() => _checking = false);
     if (match == PinMatch.wrong) {
       _failures++;
-      // After 5 wrong PINs, wait: 30 s, then doubling.
-      if (_failures >= 5) _waitUntil = DateTime.now().add(Duration(seconds: 30 << (_failures - 5).clamp(0, 6)));
+      _waitUntil = _waitAfter(_failures, DateTime.now()) ?? _waitUntil;
+      await _saveFailures();
+      if (!mounted) return;
       HapticFeedback.heavyImpact();
       if (Motion.enabled(context)) _shake.forward(from: 0);
       setState(() {
@@ -183,6 +216,7 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
     }
     _failures = 0;
     _waitUntil = null;
+    await _saveFailures();
     await _open(decoy: match == PinMatch.decoy);
   }
 
@@ -269,6 +303,11 @@ class _AppLockState extends State<AppLock> with WidgetsBindingObserver, TickerPr
     // Biometrics always open the real profile.
     if (ok) {
       _autoRetries = 0;
+      if (_failures > 0) {
+        _failures = 0;
+        _waitUntil = null;
+        await _saveFailures();
+      }
       await _open(decoy: false);
     }
   }
