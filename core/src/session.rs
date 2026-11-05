@@ -1269,6 +1269,28 @@ impl Session {
     }
 }
 
+/// How far ahead of this phone's clock another phone's "newest wins" time
+/// may be (milliseconds): enough for clocks that are a little off.
+pub(crate) const AHEAD_MS: u64 = 10 * 60 * 1000;
+
+/// Another phone's "newest wins" time (milliseconds: a pin, a timer, an
+/// edit), at most [`AHEAD_MS`] ahead of ours. A time far in the future
+/// would otherwise win over every later change, for good.
+pub(crate) fn not_ahead(at: u64) -> u64 {
+    at.min(now_ms().saturating_add(AHEAD_MS))
+}
+
+/// A "newest wins" time kept here. One further ahead than [`not_ahead`]
+/// allows was kept before that rule: it counts as long ago, so the setting
+/// isn't stuck.
+pub(crate) fn kept_time(at: u64) -> u64 {
+    if at > now_ms().saturating_add(AHEAD_MS) {
+        0
+    } else {
+        at
+    }
+}
+
 pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2372,6 +2394,37 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn times_from_far_in_the_future_dont_freeze_edits_reactions_or_answers() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let (ab, ba) = befriend(&mut alice, &mut bob);
+        alice.s.send_text(ab, "see you at 7").unwrap();
+        connect(&mut alice, &mut bob);
+        let id = alice.s.store.message(ab, 0).unwrap().unwrap().id.unwrap();
+        // An edit claiming to be from the end of time is kept as only a
+        // little ahead...
+        bob.s.on_edit(ba, &alice.pk(), id, "see you at 8".into(), u64::MAX).unwrap();
+        let m = bob.s.store.message(ba, 0).unwrap().unwrap();
+        assert_eq!(m.body, "see you at 8");
+        assert!(m.edited_at <= crate::call::now_ms() + AHEAD_MS);
+        // ...and one kept before this rule doesn't stop the next edit.
+        let mut m = m;
+        m.edited_at = u64::MAX;
+        bob.s.store.update_message(ba, 0, &m).unwrap();
+        alice.s.edit_message(ab, 0, "see you at 9").unwrap();
+        connect(&mut alice, &mut bob);
+        assert_eq!(bob.s.store.message(ba, 0).unwrap().unwrap().body, "see you at 9");
+        // Our own reaction made when our clock was ahead doesn't block the next.
+        bob.s.react(ba, 0, "👍").unwrap();
+        let mut m = bob.s.store.message(ba, 0).unwrap().unwrap();
+        m.reactions[0].at = crate::call::now_ms() + 60_000;
+        bob.s.store.update_message(ba, 0, &m).unwrap();
+        bob.s.react(ba, 0, "🎉").unwrap();
+        assert_eq!(reactions(&bob, ba, 0), [(bob.pk(), "🎉".to_string())]);
+        connect(&mut bob, &mut alice);
+        assert_eq!(reactions(&alice, ab, 0), [(bob.pk(), "🎉".to_string())]);
+    }
+
+    #[test]
     fn everyone_in_a_group_sees_edits_even_ones_that_come_first() {
         let (mut alice, mut bob, mut carol) = (Phone::new(), Phone::new(), Phone::new());
         let (ab, _) = befriend(&mut alice, &mut bob);
@@ -2404,7 +2457,8 @@ pub(crate) mod tests {
         connect(&mut alice, &mut carol);
         let cseq = carol.s.store.messages_indexed(cg, None).unwrap().last().unwrap().0;
         let m = carol.s.store.message(cg, cseq).unwrap().unwrap();
-        assert_eq!((m.body.as_str(), m.edited_at), ("train at 7", u64::MAX - 1));
+        assert_eq!(m.body, "train at 7");
+        assert!(m.edited_at <= crate::call::now_ms() + AHEAD_MS, "from the future: only a little ahead");
     }
 
     #[test]

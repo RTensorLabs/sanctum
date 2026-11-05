@@ -6,7 +6,7 @@
 //! shared id, so a pin can come before its message does.
 
 use crate::protocol::{Content, MessageId};
-use crate::session::{clip, now, Event, Result, Session, SessionError};
+use crate::session::{clip, kept_time, not_ahead, now, Event, Result, Session, SessionError};
 use serde::{Deserialize, Serialize};
 
 /// Muted until forever.
@@ -91,7 +91,7 @@ impl Session {
         };
         let key = name(b"pinned-msg:", chat_id);
         let last = self.store.kv_get::<Pinned>(&key)?.unwrap_or_default();
-        let at = now_ms().max(last.at + 1);
+        let at = now_ms().max(kept_time(last.at).saturating_add(1));
         self.store.kv_put(&key, &Pinned { id, at })?;
         self.events.push(Event::Chat(chat_id));
         self.tell_chat(chat_id, Content::Pin { id, at })
@@ -109,7 +109,8 @@ impl Session {
     pub(crate) fn on_pin(&mut self, chat_id: i64, id: Option<MessageId>, at: u64) -> Result<()> {
         let key = name(b"pinned-msg:", chat_id);
         let last = self.store.kv_get::<Pinned>(&key)?.unwrap_or_default();
-        if at > last.at {
+        let at = not_ahead(at);
+        if at > kept_time(last.at) {
             self.store.kv_put(&key, &Pinned { id, at })?;
             self.events.push(Event::Chat(chat_id));
         }
@@ -127,6 +128,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use super::{name, now_ms, Pinned};
     use crate::session::tests::{befriend, connect, Phone};
     use crate::session::now;
 
@@ -148,6 +150,30 @@ mod tests {
         assert_eq!(bob.s.pinned_message(ba).unwrap(), None);
         // An older choice arriving late changes nothing.
         bob.s.on_pin(ba, Some([9; 16]), 1).unwrap();
+        assert_eq!(bob.s.pinned_message(ba).unwrap(), None);
+    }
+
+    #[test]
+    fn a_pin_from_far_in_the_future_doesnt_stick() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let (ab, ba) = befriend(&mut alice, &mut bob);
+        alice.s.send_text(ab, "one").unwrap();
+        alice.s.send_text(ab, "two").unwrap();
+        connect(&mut alice, &mut bob);
+        let first = alice.s.store.message(ab, 0).unwrap().unwrap().id;
+        // A pin claimed to be made at the end of time.
+        bob.s.on_pin(ba, first, u64::MAX).unwrap();
+        assert_eq!(bob.s.pinned_message(ba).unwrap(), Some(0));
+        // Both can still change it.
+        bob.s.pin_message(ba, Some(1)).unwrap();
+        assert_eq!(bob.s.pinned_message(ba).unwrap(), Some(1));
+        alice.s.on_pin(ab, first, u64::MAX).unwrap();
+        alice.s.pin_message(ab, None).unwrap();
+        connect(&mut alice, &mut bob);
+        assert_eq!(bob.s.pinned_message(ba).unwrap(), None);
+        // One kept before this rule, stuck at the end of time, comes unstuck.
+        bob.s.store.kv_put(&name(b"pinned-msg:", ba), &Pinned { id: first, at: u64::MAX }).unwrap();
+        bob.s.on_pin(ba, None, now_ms()).unwrap();
         assert_eq!(bob.s.pinned_message(ba).unwrap(), None);
     }
 

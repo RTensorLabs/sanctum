@@ -12,7 +12,7 @@
 //! never notifies.
 
 use crate::protocol::{Content, MessageId};
-use crate::session::{Event, Result, Session, SessionError};
+use crate::session::{kept_time, Event, Result, Session, SessionError};
 use crate::store::{Reaction, StoredMessage};
 
 /// Longest reaction, in bytes: enough for any emoji, even a family or a
@@ -72,9 +72,12 @@ impl Session {
         let Some(id) = msg.id else {
             return Err(SessionError::Protocol);
         };
-        let at = now_ms();
+        let me = self.public_key();
+        // After our last reaction, even if this phone's clock went back.
+        let last = msg.reactions.iter().find(|r| r.who == me).map_or(0, |r| kept_time(r.at));
+        let at = now_ms().max(last.saturating_add(1));
         let mine = Reaction {
-            who: self.public_key(),
+            who: me,
             emoji: emoji.clone(),
             at,
         };

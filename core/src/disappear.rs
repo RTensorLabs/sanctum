@@ -7,7 +7,7 @@
 //! their files, once that time comes. Messages from before stay.
 
 use crate::protocol::Content;
-use crate::session::{now, Event, Result, Session, SessionError};
+use crate::session::{kept_time, not_ahead, now, Event, Result, Session, SessionError};
 use crate::store::{DisappearTimer, StoredMessage};
 
 /// The shortest and longest timer a chat can have.
@@ -61,7 +61,7 @@ impl Session {
         if last.seconds == seconds {
             return Ok(Vec::new());
         }
-        let at = now_ms().max(last.at + 1);
+        let at = now_ms().max(kept_time(last.at).saturating_add(1));
         self.store.set_disappear_timer(chat_id, &DisappearTimer { seconds, at })?;
         self.add_timer_notice(chat_id, notice("You", seconds))?;
         self.tell_chat(chat_id, Content::Disappear { seconds, at })
@@ -78,7 +78,8 @@ impl Session {
             return Ok(());
         };
         let last = self.store.disappear_timer(chat_id)?;
-        if at <= last.at {
+        let at = not_ahead(at);
+        if at <= kept_time(last.at) {
             return Ok(());
         }
         self.store.set_disappear_timer(chat_id, &DisappearTimer { seconds, at })?;
@@ -159,5 +160,34 @@ mod tests {
         assert_eq!(alice.s.disappear_seconds(ab).unwrap(), 0);
         assert!(bodies(&alice, ab).last().unwrap().starts_with("Bob turned off"));
         assert!(alice.s.set_disappear(ab, 5).is_err(), "too short");
+    }
+
+    #[test]
+    fn a_timer_from_far_in_the_future_doesnt_stick() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let (ab, ba) = befriend(&mut alice, &mut bob);
+        connect(&mut alice, &mut bob);
+        // Bob's phone (changed, or with its clock far off) says "forever ahead".
+        alice.s.on_disappear(ab, "Bob", 3600, u64::MAX).unwrap();
+        assert_eq!(alice.s.disappear_seconds(ab).unwrap(), 3600);
+        assert!(alice.s.store.disappear_timer(ab).unwrap().at <= now_ms() + crate::session::AHEAD_MS);
+        // Alice can still change it, and so can Bob, normally.
+        alice.s.set_disappear(ab, 0).unwrap();
+        connect(&mut alice, &mut bob);
+        assert_eq!(bob.s.disappear_seconds(ba).unwrap(), 0);
+        bob.s.set_disappear(ba, 86400).unwrap();
+        connect(&mut bob, &mut alice);
+        assert_eq!(alice.s.disappear_seconds(ab).unwrap(), 86400);
+
+        // One kept before this rule, stuck at the end of time, comes unstuck.
+        alice.s.store.set_disappear_timer(ab, &DisappearTimer { seconds: 3600, at: u64::MAX }).unwrap();
+        alice.s.on_disappear(ab, "Bob", 60, now_ms()).unwrap();
+        assert_eq!(alice.s.disappear_seconds(ab).unwrap(), 60);
+        alice.s.store.set_disappear_timer(ab, &DisappearTimer { seconds: 3600, at: u64::MAX }).unwrap();
+        alice.s.set_disappear(ab, 0).unwrap();
+        assert_eq!(alice.s.disappear_seconds(ab).unwrap(), 0);
+        // Somewhat ahead (a clock a little off) still counts as newest.
+        alice.s.on_disappear(ab, "Bob", 120, now_ms() + 60_000).unwrap();
+        assert_eq!(alice.s.disappear_seconds(ab).unwrap(), 120);
     }
 }

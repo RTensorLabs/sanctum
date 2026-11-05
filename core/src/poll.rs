@@ -8,7 +8,7 @@
 //! separately) waits on the side until the poll comes.
 
 use crate::protocol::{Content, MessageId, Poll};
-use crate::session::{clip, now, Event, Result, Session, SessionError};
+use crate::session::{clip, kept_time, now, Event, Result, Session, SessionError};
 use crate::store::{ChatKind, ChatMeta, OutboxItem, OutboxState, StoredMessage, Vote};
 
 /// Most choices a poll can have.
@@ -124,9 +124,12 @@ impl Session {
             return Err(SessionError::Protocol);
         };
         let choices = tidy_choices(poll, choices);
-        let at = now_ms();
+        let me = self.public_key();
+        // After our last answer, even if this phone's clock went back.
+        let last = msg.votes.iter().find(|v| v.voter == me).map_or(0, |v| kept_time(v.at));
+        let at = now_ms().max(last.saturating_add(1));
         let vote = Vote {
-            voter: self.public_key(),
+            voter: me,
             choices: choices.clone(),
             at,
         };
