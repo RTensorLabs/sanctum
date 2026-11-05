@@ -169,10 +169,16 @@ pub struct Session {
     pub(crate) sync: GroupSync,
     /// When the next scheduled message is due (0: not looked yet).
     pub(crate) scheduled_next: u64,
+    /// Scheduled messages that failed to go at their time, by id: how
+    /// often (see `schedule`). Memory only.
+    pub(crate) scheduled_tries: std::collections::HashMap<u64, u8>,
     /// Tests: this many of the next messages fail to be taken in, as if
     /// the phone ran out of space.
     #[cfg(test)]
     pub(crate) fail_taking_in: u8,
+    /// Tests: this many of the next scheduled sends fail.
+    #[cfg(test)]
+    pub(crate) fail_sending: u8,
 }
 
 impl Session {
@@ -206,8 +212,11 @@ impl Session {
             media: MediaHub::default(),
             sync: GroupSync::default(),
             scheduled_next: 0,
+            scheduled_tries: Default::default(),
             #[cfg(test)]
             fail_taking_in: 0,
+            #[cfg(test)]
+            fail_sending: 0,
         })
     }
 
@@ -1130,6 +1139,7 @@ impl Session {
             }
         }
         self.forget_chat_prefs(chat_id)?;
+        self.forget_scheduled(chat_id)?;
         self.store.delete_chat(chat_id)?;
         Ok(())
     }

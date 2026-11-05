@@ -282,6 +282,7 @@ impl Session {
             self.broadcast(&meta, &Content::GroupLeave, None)?
         };
         // Already encrypted, the goodbyes still go out from the outbox.
+        self.forget_scheduled(chat_id)?;
         self.store.delete_chat(chat_id)?;
         if !meta.group_id.is_empty() {
             self.sync_forget(&meta.group_id)?;
