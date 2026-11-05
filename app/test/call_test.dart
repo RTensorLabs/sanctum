@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -309,6 +310,45 @@ void main() {
     await tester.runAsync(() => Appearance.setTheme(ThemeChoice.dark));
 
     await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('answering twice answers once, and a refused microphone is explained', (tester) async {
+    final calls = CallController.instance;
+    final asked = <String>[];
+    final mic = Completer<bool>();
+    const channel = MethodChannel('sanctum/app');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      asked.add(call.method);
+      return call.method == 'requestMicrophone' ? mic.future : null;
+    });
+    final notices = <String?>[];
+    void heard() => notices.add(calls.notice.value);
+    calls.notice.addListener(heard);
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null);
+      calls.notice.removeListener(heard);
+      calls.call.value = null;
+      calls.notice.value = null;
+    });
+
+    calls.call.value = _call(CallPhaseView.ringing, outgoing: false);
+    final first = calls.answer();
+    final second = calls.answer();
+    Future<void> settle() async {
+      for (var i = 0; i < 6; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    await settle();
+    expect(asked.where((m) => m == 'requestMicrophone'), hasLength(1));
+
+    mic.complete(false);
+    await settle();
+    await first;
+    await second;
+    expect(notices, contains(startsWith('Calls need the microphone.')));
   });
 
   testWidgets('a shrunk call bar says who only while unlocked', (tester) async {

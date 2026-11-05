@@ -40,6 +40,13 @@ class CallController with WidgetsBindingObserver {
   final localFormat = ValueNotifier<VideoFormat?>(null);
   final remoteFormat = ValueNotifier<VideoFormat?>(null);
 
+  /// Something the call screen should say about this call, in plain words
+  /// (e.g. it couldn't be answered without the microphone).
+  final notice = ValueNotifier<String?>(null);
+
+  /// An answer is under way: a second tap doesn't answer twice.
+  bool _answering = false;
+
   bool _started = false;
   bool _audio = false;
   bool _paused = false;
@@ -126,22 +133,28 @@ class CallController with WidgetsBindingObserver {
   /// unless `video` is false (or the camera isn't allowed).
   Future<void> answer({bool video = true}) async {
     final c = call.value;
-    if (c == null || c.outgoing || c.phase != CallPhaseView.ringing) return;
-    await Background.callRingStop();
-    if (!await Background.requestMicrophone()) {
-      await hangUp();
-      return;
+    if (c == null || c.outgoing || c.phase != CallPhaseView.ringing || _answering) return;
+    _answering = true;
+    try {
+      await Background.callRingStop();
+      if (!await Background.requestMicrophone()) {
+        notice.value = 'Calls need the microphone. You can allow it in your phone\'s settings for Sanctum.';
+        await hangUp();
+        return;
+      }
+      final caps = await _caps();
+      final withCamera = video && c.video && caps.videoRecord.isNotEmpty && await Background.requestCamera();
+      await Background.callServiceStart(title(c), camera: withCamera);
+      await callAnswer(
+        play: caps.play,
+        record: caps.record,
+        videoPlay: caps.videoPlay,
+        videoRecord: caps.videoRecord,
+        video: withCamera,
+      );
+    } finally {
+      _answering = false;
     }
-    final caps = await _caps();
-    final withCamera = video && c.video && caps.videoRecord.isNotEmpty && await Background.requestCamera();
-    await Background.callServiceStart(title(c), camera: withCamera);
-    await callAnswer(
-      play: caps.play,
-      record: caps.record,
-      videoPlay: caps.videoPlay,
-      videoRecord: caps.videoRecord,
-      video: withCamera,
-    );
   }
 
   /// Hangs up, declines, or stops calling.
@@ -151,6 +164,7 @@ class CallController with WidgetsBindingObserver {
     } catch (_) {
       _stop();
       call.value = null;
+      notice.value = null;
     }
   }
 
@@ -230,6 +244,8 @@ class CallController with WidgetsBindingObserver {
     // The decoy never rings (Rust doesn't tell it either).
     if (Profile.decoy.value) return;
     _clear?.cancel();
+    // A new call starts with nothing to add.
+    if (call.value?.id != c.id) notice.value = null;
     call.value = c;
     switch (c.phase) {
       case CallPhaseView.ringing when !c.outgoing:
@@ -250,8 +266,11 @@ class CallController with WidgetsBindingObserver {
         }
       case CallPhaseView.ended:
         _stop();
-        _clear = Timer(_linger, () {
-          if (identical(call.value, c)) call.value = null;
+        // Longer when there's something to read.
+        _clear = Timer(notice.value == null ? _linger : _linger * 2, () {
+          if (!identical(call.value, c)) return;
+          call.value = null;
+          notice.value = null;
         });
     }
   }

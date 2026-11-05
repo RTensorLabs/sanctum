@@ -196,7 +196,7 @@ class _CallScreenState extends State<CallScreen> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([_calls.media, _calls.textures, _calls.camera, _calls.remoteFormat]),
+      listenable: Listenable.merge([_calls.media, _calls.textures, _calls.camera, _calls.remoteFormat, _calls.notice]),
       builder: (context, _) => _build(context),
     );
   }
@@ -225,7 +225,7 @@ class _CallScreenState extends State<CallScreen> {
     final showingMine = active && _calls.camera.value && local != null;
     final fg = seeing ? Colors.white : Palette.text;
     final path = callPath(active ? m?.path : null);
-    final note = active ? videoNote(m, name) : null;
+    final note = _calls.notice.value ?? (active ? videoNote(m, name) : null);
     return Material(
       color: seeing ? Colors.black : Palette.bg,
       child: Stack(
