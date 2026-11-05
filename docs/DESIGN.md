@@ -6,7 +6,7 @@ Android first; iOS later.
 ## Principles
 1. **No servers, no tracking.** No accounts, phone numbers, analytics or crash reporters.
 2. **No IP addresses by default.** Peers, the UI and logs never see an IP (enforced in `core/src/transport.rs`). The only exceptions are opt-in and say so: Nearby (the local network) and Faster calls (the friend's phone sees yours, only if both opt in).
-3. **Encrypted everywhere.** End-to-end in transit (MLS) and at rest (SQLCipher).
+3. **Encrypted everywhere.** End-to-end in transit (MLS) and at rest (every row sealed before SQLite stores it; see `core/src/store.rs`).
 4. **Invite-only.** You join by scanning a friend's QR code in person.
 
 ## Architecture
@@ -19,8 +19,11 @@ Rust core (sanctum-core)
    ├─ mls        OpenMLS (RFC 9420) groups; 1:1 is a 2-member group. Identity key = MLS signing key
    ├─ store      SQLite with every row sealed (XChaCha20-Poly1305); key in Android Keystore
    ├─ temp_chat  in-memory only, 24h TTL, wipe anytime
-   └─ transport  Internet: Tor onion service per device (Arti)          [todo]
-                 Nearby: Wi-Fi Direct + Bluetooth LE (temp chats)        [todo]
+   └─ transport  peer addresses (the types can't hold an IP)
+Rust networking (sanctum-net)
+   ├─ tor        Internet: a Tor onion service per device (Arti)
+   ├─ nearby     opt-in: local Wi-Fi discovery and Bluetooth LE links
+   └─ https      updates through Tor
 ```
 
 ### Talking to friends (implemented)
@@ -73,11 +76,13 @@ An opt-in feature in the sigil sheet (`net/src/nearby.rs`).
 - **Later:** Wi-Fi Direct (mostly covered by hotspot mode).
 
 ## Updates over the air
-- **Checking:** the newest release is found through Tor, by following `github.com/<repo>/releases/latest`, which redirects to the newest `build-N` tag. That uses no API, so shared Tor exits don't hit rate limits. Ownership redirects are resolved before reading the tag, without downloading the final HTML page. The legacy repository URL remains a compatibility entry point after a move; do not recreate the old repository path, because that removes GitHub's redirect. Older APKs that predate this handling may need a one-time manual upgrade after the move.
-- **Downloading:** the APK and `changelog.md` come from the release, also through Tor, on circuits kept apart from chat traffic.
+- **Checking:** the newest release is found through Tor, by following `github.com/<repo>/releases/latest`, which redirects to the newest `build-N` tag. That uses no API, so shared Tor exits don't hit rate limits. Ownership redirects are resolved before reading the tag, without downloading the final HTML page.
+- **Where:** `REPOS` in `app/rust/src/api/update.rs`. The app asks `RTensorLabs/sanctum` first and the old `Tejascodex001/sanctum` only if that fails (it can't be reached, or has no `build-N` release); the download comes from whichever answered. Installed builds from before this change only know the old address and rely on GitHub's redirect after the move, so don't recreate a repository at the old path: that removes the redirect. Older APKs that predate redirect handling may need a one-time manual upgrade after the move.
+- **Downloading:** the APK and `changelog.md` come from the release, also through Tor, on circuits kept apart from chat traffic. A download that receives nothing for 2 minutes, or still isn't done after 30, gives up so it can be tried again.
 - **Installing:** Android's installer takes it from there and refuses any APK not signed with the app's own key. The first time, the user allows Sanctum to install apps.
 - **Changelog:** CI writes it from commit messages (`.github/scripts/changelog.py`), as `## Build N` sections. The app shows those newer than the installed build. Release tags point at the commit that was built.
-- **When:** the app checks when Tor connects, at most every 6 hours (this can be turned off), or on demand from the sigil sheet.
+- **Releases (CI, `.github/workflows/android.yml`):** every push to `main` that changes more than documentation (`docs/`, Markdown files) or the website builds `build-N`; skipped commits roll into the next build's changelog. Builds run one at a time, in order. A build job with a read-only token tests and builds; the signing key exists only for the final release build. A separate publish job, the only one allowed to write, checks that the APK is signed with the release certificate (its SHA-256 is pinned in the workflow) and publishes it. Without the signing secrets the build fails instead of publishing a debug-signed APK. Runs on other branches never publish.
+- **When:** the app checks when Tor connects, then every five minutes while connected, and on returning to the app after a minute away (a failed check is retried after a minute). Automatic checks can be turned off; pull down on Home or Settings → Updates checks right away.
 
 ## Feedback to the developer
 Settings → **Send feedback** (`core/src/feedback.rs`, `net/src/feedback.rs`, `app/rust/src/api/feedback.rs`, `app/lib/settings/feedback_screen.dart`). No server: it goes to the developer's own Sanctum through Tor.
