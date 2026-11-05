@@ -190,7 +190,10 @@ impl Session {
                 last: String::new(),
             };
             for (seq, m) in &messages {
-                if !m.from_me && m.sent_at > since {
+                // When it came, not when it was written: a message that
+                // waited on its way is still new to us.
+                let came = if m.received_at > 0 { m.received_at } else { m.sent_at };
+                if !m.from_me && came > since {
                     chat.count += 1;
                     if let Some(s) = m.sender {
                         if !chat.senders.contains(&s) {

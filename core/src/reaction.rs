@@ -12,7 +12,7 @@
 //! never notifies.
 
 use crate::protocol::{Content, MessageId};
-use crate::session::{kept_time, Event, Result, Session, SessionError};
+use crate::session::{kept_time, now, Event, Result, Session, SessionError};
 use crate::store::{Reaction, StoredMessage};
 
 /// Longest reaction, in bytes: enough for any emoji, even a family or a
@@ -129,6 +129,7 @@ impl Session {
             }
         }
         self.take_waiting_edit(chat_id, &mut msg)?;
+        msg.received_at = now();
         Ok(self.store.add_message(chat_id, &msg)?)
     }
 }

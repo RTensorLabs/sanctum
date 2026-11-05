@@ -2677,6 +2677,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn catch_up_counts_messages_by_when_they_came() {
+        let (mut alice, mut bob) = (Phone::new(), Phone::new());
+        let (ab, _) = befriend(&mut alice, &mut bob);
+        connect(&mut alice, &mut bob);
+        let since = now() - 60;
+        // Written an hour ago, it waited on Bob's phone until now.
+        let written = now() - 3600;
+        let late = Content::Text { body: "sent earlier".into(), sent_at: written };
+        alice.s.deliver(ab, &bob.pk(), rand::random(), late).unwrap();
+        let m = alice.s.store.messages(ab, None).unwrap().pop().unwrap();
+        assert_eq!(m.sent_at, written);
+        assert!(m.received_at >= since);
+        let up = alice.s.catch_up(since, false).unwrap();
+        assert_eq!(up.chats.len(), 1);
+        assert_eq!((up.chats[0].count, up.chats[0].last.as_str()), (1, "sent earlier"));
+        assert!(alice.s.catch_up(now() + 1, false).unwrap().chats.is_empty());
+    }
+
+    #[test]
     fn search_and_catch_up_find_whats_new() {
         use crate::protocol::{Plan, Poll};
         let (mut alice, mut bob) = (Phone::new(), Phone::new());

@@ -254,6 +254,34 @@ pub struct StoredMessage {
     pub view_once: u8,
     /// A shared location (`body` holds the words shown).
     pub place: Option<Place>,
+    /// When this phone got it (Unix seconds), for messages we received;
+    /// 0 for ours, and for messages from before this was kept. A message
+    /// can wait a long time on its way, so `sent_at` isn't when it came.
+    pub received_at: u64,
+}
+
+/// The eleventh message format, before the time a message came was kept.
+#[derive(Deserialize)]
+struct StoredMessageV10 {
+    from_me: bool,
+    body: String,
+    sent_at: u64,
+    delivered: bool,
+    id: Option<MessageId>,
+    reply: Option<Quote>,
+    sender: Option<[u8; 32]>,
+    media: Option<Media>,
+    poll: Option<Poll>,
+    votes: Vec<Vote>,
+    album: Option<Album>,
+    reactions: Vec<Reaction>,
+    call: Option<CallLog>,
+    shared_by: Option<[u8; 32]>,
+    notice: bool,
+    edited_at: u64,
+    expires_at: u64,
+    view_once: u8,
+    place: Option<Place>,
 }
 
 /// A chat's disappearing-messages timer, the same on every phone in it.
@@ -1015,6 +1043,30 @@ impl Store {
         if let Ok(m) = postcard::from_bytes::<StoredMessage>(&plain) {
             return Ok(m);
         }
+        if let Ok(v10) = postcard::from_bytes::<StoredMessageV10>(&plain) {
+            return Ok(StoredMessage {
+                from_me: v10.from_me,
+                body: v10.body,
+                sent_at: v10.sent_at,
+                delivered: v10.delivered,
+                id: v10.id,
+                reply: v10.reply,
+                sender: v10.sender,
+                media: v10.media,
+                poll: v10.poll,
+                votes: v10.votes,
+                album: v10.album,
+                reactions: v10.reactions,
+                call: v10.call,
+                shared_by: v10.shared_by,
+                notice: v10.notice,
+                edited_at: v10.edited_at,
+                expires_at: v10.expires_at,
+                view_once: v10.view_once,
+                place: v10.place,
+                received_at: 0,
+            });
+        }
         if let Ok(v9) = postcard::from_bytes::<StoredMessageV9>(&plain) {
             return Ok(StoredMessage {
                 from_me: v9.from_me,
@@ -1594,6 +1646,70 @@ mod tests {
         new.expires_at = 5;
         new.view_once = 2;
         new.place = Some(Place { lat: 12.97, lon: 77.59 });
+        s.update_message(chat, 0, &new).unwrap();
+        assert_eq!(s.message(chat, 0).unwrap().unwrap(), new);
+    }
+
+    #[test]
+    fn messages_from_before_arrival_times_upgrade() {
+        #[derive(Serialize)]
+        struct V10 {
+            from_me: bool,
+            body: String,
+            sent_at: u64,
+            delivered: bool,
+            id: Option<MessageId>,
+            reply: Option<Quote>,
+            sender: Option<[u8; 32]>,
+            media: Option<Media>,
+            poll: Option<Poll>,
+            votes: Vec<Vote>,
+            album: Option<Album>,
+            reactions: Vec<Reaction>,
+            call: Option<CallLog>,
+            shared_by: Option<[u8; 32]>,
+            notice: bool,
+            edited_at: u64,
+            expires_at: u64,
+            view_once: u8,
+            place: Option<Place>,
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path().join("s.db"), &[7; 32]).unwrap();
+        let chat = s.create_chat(&meta("Bob")).unwrap();
+        let old = V10 {
+            from_me: false,
+            body: "before".into(),
+            sent_at: 4,
+            delivered: true,
+            id: Some([3; 16]),
+            reply: None,
+            sender: Some([2; 32]),
+            media: None,
+            poll: None,
+            votes: Vec::new(),
+            album: None,
+            reactions: Vec::new(),
+            call: None,
+            shared_by: None,
+            notice: false,
+            edited_at: 9,
+            expires_at: 5,
+            view_once: 1,
+            place: Some(Place { lat: 1.5, lon: 2.5 }),
+        };
+        s.db.execute(
+            "INSERT INTO messages (chat_id, seq, sealed) VALUES (?1, 0, ?2)",
+            params![chat, s.seal(&message_aad(chat, 0), &old).unwrap()],
+        )
+        .unwrap();
+        let m = s.message(chat, 0).unwrap().unwrap();
+        assert_eq!(
+            (m.body.as_str(), m.edited_at, m.expires_at, m.view_once, m.place, m.received_at),
+            ("before", 9, 5, 1, Some(Place { lat: 1.5, lon: 2.5 }), 0)
+        );
+        let mut new = m.clone();
+        new.received_at = 77;
         s.update_message(chat, 0, &new).unwrap();
         assert_eq!(s.message(chat, 0).unwrap().unwrap(), new);
     }
