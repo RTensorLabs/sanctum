@@ -406,7 +406,7 @@ impl Backlog {
     /// Room for a sound packet? Takes it if so.
     pub fn take_audio(&self) -> bool {
         self.audio
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < AUDIO_BACKLOG).then_some(n + 1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < AUDIO_BACKLOG).then_some(n + 1))
             .is_ok()
     }
 
@@ -417,7 +417,7 @@ impl Backlog {
             return false;
         }
         self.video_bytes
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n == 0 || n + bytes <= VIDEO_BACKLOG).then_some(n + bytes)
             })
             .is_ok()
@@ -425,12 +425,12 @@ impl Backlog {
 
     /// A sound packet was written (or given up).
     pub fn audio_done(&self) {
-        let _ = self.audio.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| Some(n.saturating_sub(1)));
+        let _ = self.audio.try_update(Ordering::AcqRel, Ordering::Acquire, |n| Some(n.saturating_sub(1)));
     }
 
     /// `bytes` of pictures were written (or given up).
     pub fn video_done(&self, bytes: usize) {
-        let _ = self.video_bytes.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| Some(n.saturating_sub(bytes)));
+        let _ = self.video_bytes.try_update(Ordering::AcqRel, Ordering::Acquire, |n| Some(n.saturating_sub(bytes)));
     }
 
     pub fn audio_waiting(&self) -> usize {
